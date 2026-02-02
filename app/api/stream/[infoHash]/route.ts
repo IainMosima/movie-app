@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import WebTorrent from "webtorrent";
+import { getSettings } from "@/lib/settings-store";
 
 // Shared client with files route
 declare global {
@@ -77,6 +78,8 @@ export async function GET(
       );
     }
 
+    // Get buffer settings for logging
+    const settings = getSettings();
     const fileSize = file.length;
     const rangeHeader = request.headers.get("range");
 
@@ -107,11 +110,18 @@ export async function GET(
     }
 
     // Range request
-    const [start, end] = parseRange(rangeHeader, fileSize);
+    const [start, requestedEnd] = parseRange(rangeHeader, fileSize);
+
+    // Cap chunk size to buffer setting to prevent stalling on large requests
+    const maxChunkBytes = (settings.bufferSizeMB || 200) * 1024 * 1024;
+    const end = Math.min(requestedEnd, start + maxChunkBytes - 1);
     const chunkSize = end - start + 1;
 
+    // Ensure file is selected for download (WebTorrent auto-prioritizes active streams)
+    file.select();
+
     console.log(
-      `Stream ${file.name}: ${start}-${end}/${fileSize} (${(chunkSize / 1024 / 1024).toFixed(1)}MB)`
+      `Stream ${file.name}: ${start}-${end}/${fileSize} (${(chunkSize / 1024 / 1024).toFixed(1)}MB chunk, requested ${((requestedEnd - start + 1) / 1024 / 1024).toFixed(1)}MB)`
     );
 
     const stream = file.createReadStream({ start, end });

@@ -11,6 +11,7 @@ const DEFAULT_SETTINGS: EngineSettings = {
   maxConnections: 55,
   cleanupDelaySeconds: 30,
   prebufferSeconds: 30,
+  bufferSizeMB: 200, // 200MB default buffer for smooth 4K
 };
 
 function ensureSettingsFile(): void {

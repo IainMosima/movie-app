@@ -1,11 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, use } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { VideoPlayer } from "@/components/video-player";
-import { use } from "react";
 
 interface WatchPageProps {
   params: Promise<{ infoHash: string }>;
@@ -104,18 +101,6 @@ export default function WatchPage({ params }: WatchPageProps) {
 
   return (
     <div className="fixed inset-0 bg-black z-50">
-      {/* Back button overlay */}
-      <div className="absolute top-4 left-4 z-50">
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={handleClose}
-          className="h-10 w-10 bg-black/50 hover:bg-black/70 text-white"
-        >
-          <ArrowLeft className="h-5 w-5" />
-        </Button>
-      </div>
-
       {/* Video Player */}
       <VideoPlayer
         src={streamUrl}

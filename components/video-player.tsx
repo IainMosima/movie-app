@@ -8,11 +8,8 @@ import {
   VolumeX,
   Maximize,
   Minimize,
-  SkipBack,
-  SkipForward,
   PictureInPicture2,
   Loader2,
-  Settings,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -343,21 +340,30 @@ export function VideoPlayer({
         onClick={handleVideoTap}
       />
 
-      {/* Skip indicator (double-tap feedback) */}
+      {/* Skip indicator (double-tap feedback) - Netflix style */}
       {skipIndicator.show && (
         <div
           className={cn(
-            "absolute top-1/2 -translate-y-1/2 flex items-center justify-center pointer-events-none",
-            skipIndicator.side === "left" ? "left-12" : "right-12"
+            "absolute top-1/2 -translate-y-1/2 flex flex-col items-center gap-2 pointer-events-none animate-fade-in",
+            skipIndicator.side === "left" ? "left-20" : "right-20"
           )}
         >
-          <div className="bg-white/20 backdrop-blur-sm rounded-full p-4 animate-ping">
+          <div className="h-20 w-20 rounded-full bg-black/40 backdrop-blur-sm flex items-center justify-center">
             {skipIndicator.side === "left" ? (
-              <SkipBack className="h-8 w-8 text-white" />
+              <svg className="h-10 w-10 text-white animate-rotate-back" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M12.5 8.5L7.5 12l5 3.5V8.5z" fill="currentColor" stroke="none"/>
+                <path d="M12 4V2" strokeLinecap="round"/>
+                <path d="M12 4C7.58 4 4 7.58 4 12s3.58 8 8 8 8-3.58 8-8" strokeLinecap="round"/>
+              </svg>
             ) : (
-              <SkipForward className="h-8 w-8 text-white" />
+              <svg className="h-10 w-10 text-white animate-rotate-forward" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M11.5 8.5l5 3.5-5 3.5V8.5z" fill="currentColor" stroke="none"/>
+                <path d="M12 4V2" strokeLinecap="round"/>
+                <path d="M12 4c4.42 0 8 3.58 8 8s-3.58 8-8 8-8-3.58-8-8" strokeLinecap="round"/>
+              </svg>
             )}
           </div>
+          <span className="text-white text-lg font-semibold">10 seconds</span>
         </div>
       )}
 
@@ -385,27 +391,73 @@ export function VideoPlayer({
         </button>
       )}
 
-      {/* Controls overlay */}
+      {/* Title bar at top */}
+      {title && (
+        <div
+          className={cn(
+            "absolute top-0 inset-x-0 p-6 bg-gradient-to-b from-black/80 via-black/40 to-transparent transition-opacity duration-300",
+            showControls ? "opacity-100" : "opacity-0 pointer-events-none"
+          )}
+        >
+          <h2 className="text-xl font-semibold text-white truncate">{title}</h2>
+        </div>
+      )}
+
+      {/* Netflix-style skip buttons in center */}
       <div
         className={cn(
-          "absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent transition-opacity duration-300",
-          showControls ? "opacity-100" : "opacity-0 pointer-events-none"
+          "absolute inset-0 flex items-center justify-center gap-32 pointer-events-none transition-opacity duration-300",
+          showControls && !isBuffering ? "opacity-100" : "opacity-0"
         )}
       >
-        {/* Title bar */}
-        {title && (
-          <div className="absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/70 to-transparent">
-            <h2 className="text-lg font-medium text-white truncate">{title}</h2>
+        {/* Skip back */}
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); skip(-10); }}
+          className="pointer-events-auto flex flex-col items-center gap-1 group"
+        >
+          <div className="h-16 w-16 rounded-full border-2 border-white/30 flex items-center justify-center group-hover:border-white/60 group-hover:bg-white/10 transition-all">
+            <svg className="h-8 w-8 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M12.5 8.5L7.5 12l5 3.5V8.5z" fill="currentColor" stroke="none"/>
+              <path d="M12 4V2" strokeLinecap="round"/>
+              <path d="M12 4C7.58 4 4 7.58 4 12s3.58 8 8 8 8-3.58 8-8" strokeLinecap="round"/>
+            </svg>
           </div>
-        )}
+          <span className="text-white text-sm font-medium">10</span>
+        </button>
 
-        <div className="p-4 space-y-3">
+        {/* Skip forward */}
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); skip(10); }}
+          className="pointer-events-auto flex flex-col items-center gap-1 group"
+        >
+          <div className="h-16 w-16 rounded-full border-2 border-white/30 flex items-center justify-center group-hover:border-white/60 group-hover:bg-white/10 transition-all">
+            <svg className="h-8 w-8 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M11.5 8.5l5 3.5-5 3.5V8.5z" fill="currentColor" stroke="none"/>
+              <path d="M12 4V2" strokeLinecap="round"/>
+              <path d="M12 4c4.42 0 8 3.58 8 8s-3.58 8-8 8-8-3.58-8-8" strokeLinecap="round"/>
+            </svg>
+          </div>
+          <span className="text-white text-sm font-medium">10</span>
+        </button>
+      </div>
+
+      {/* Bottom controls */}
+      <div
+        className={cn(
+          "absolute inset-x-0 bottom-0 bg-gradient-to-t from-black via-black/60 to-transparent transition-opacity duration-300 pb-4 pt-20",
+          showControls ? "opacity-100" : "opacity-0 pointer-events-none"
+        )}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-6">
           {/* Progress bar */}
-          <div className="relative group/progress">
-            {/* Buffered progress */}
-            <div className="absolute h-1 bg-zinc-600 rounded-full w-full">
+          <div className="relative group/progress mb-4" onClick={(e) => e.stopPropagation()}>
+            {/* Buffered progress (pointer-events-none so clicks go through to slider) */}
+            <div className="absolute h-1 group-hover/progress:h-1.5 bg-white/20 rounded-full w-full transition-all pointer-events-none">
               <div
-                className="h-full bg-zinc-500 rounded-full"
+                className="h-full bg-white/40 rounded-full"
                 style={{ width: `${(buffered / duration) * 100}%` }}
               />
             </div>
@@ -414,137 +466,111 @@ export function VideoPlayer({
               max={duration || 100}
               step={0.1}
               onValueChange={handleSeek}
-              className="cursor-pointer"
+              className="cursor-pointer [&_[role=slider]]:h-4 [&_[role=slider]]:w-4 [&_[role=slider]]:opacity-0 group-hover/progress:[&_[role=slider]]:opacity-100 [&_[role=slider]]:transition-opacity"
             />
           </div>
 
-          {/* Controls */}
-          <div className="flex items-center gap-2">
-            {/* Left controls */}
-            <div className="flex items-center gap-1">
+          {/* Controls row */}
+          <div className="flex items-center gap-4">
+            {/* Play/Pause */}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={togglePlay}
+              className="h-12 w-12 text-white hover:bg-white/10 rounded-full"
+            >
+              {isPlaying ? (
+                <Pause className="h-7 w-7" />
+              ) : (
+                <Play className="h-7 w-7 fill-current ml-1" />
+              )}
+            </Button>
+
+            {/* Volume */}
+            <div className="flex items-center gap-2 group/volume">
               <Button
                 variant="ghost"
                 size="icon"
-                onClick={togglePlay}
-                className="h-10 w-10 text-white hover:bg-white/20"
+                onClick={toggleMute}
+                className="h-10 w-10 text-white hover:bg-white/10 rounded-full"
               >
-                {isPlaying ? (
-                  <Pause className="h-5 w-5" />
+                {isMuted || volume === 0 ? (
+                  <VolumeX className="h-5 w-5" />
                 ) : (
-                  <Play className="h-5 w-5 fill-current" />
+                  <Volume2 className="h-5 w-5" />
                 )}
               </Button>
-
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={(e) => { e.stopPropagation(); skip(-10); }}
-                className="h-10 px-3 text-white hover:bg-white/20 gap-1"
-              >
-                <SkipBack className="h-5 w-5" />
-                <span className="text-xs font-medium">10</span>
-              </Button>
-
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={(e) => { e.stopPropagation(); skip(10); }}
-                className="h-10 px-3 text-white hover:bg-white/20 gap-1"
-              >
-                <span className="text-xs font-medium">10</span>
-                <SkipForward className="h-5 w-5" />
-              </Button>
-
-              {/* Volume */}
-              <div className="flex items-center gap-1 group/volume">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={toggleMute}
-                  className="h-10 w-10 text-white hover:bg-white/20"
-                >
-                  {isMuted || volume === 0 ? (
-                    <VolumeX className="h-5 w-5" />
-                  ) : (
-                    <Volume2 className="h-5 w-5" />
-                  )}
-                </Button>
-                <div className="w-0 overflow-hidden group-hover/volume:w-24 transition-all">
-                  <Slider
-                    value={[isMuted ? 0 : volume]}
-                    max={1}
-                    step={0.01}
-                    onValueChange={handleVolumeChange}
-                    className="cursor-pointer"
-                  />
-                </div>
+              <div className="w-0 overflow-hidden group-hover/volume:w-20 transition-all duration-200">
+                <Slider
+                  value={[isMuted ? 0 : volume]}
+                  max={1}
+                  step={0.01}
+                  onValueChange={handleVolumeChange}
+                  className="cursor-pointer"
+                />
               </div>
-
-              {/* Time */}
-              <span className="text-sm text-white ml-2 tabular-nums">
-                {formatDuration(currentTime)} / {formatDuration(duration)}
-              </span>
             </div>
+
+            {/* Time */}
+            <span className="text-sm text-white/90 tabular-nums">
+              {formatDuration(currentTime)} / {formatDuration(duration)}
+            </span>
 
             {/* Spacer */}
             <div className="flex-1" />
 
-            {/* Right controls */}
-            <div className="flex items-center gap-1">
-              {/* Playback speed */}
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-white hover:bg-white/20 text-sm"
+            {/* Playback speed */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  className="text-white hover:bg-white/10 text-sm h-10 px-3 rounded-full"
+                >
+                  {playbackRate}x
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="bg-zinc-900/95 border-zinc-800 backdrop-blur-sm">
+                {PLAYBACK_RATES.map((rate) => (
+                  <DropdownMenuItem
+                    key={rate}
+                    onClick={() => handlePlaybackRateChange(rate)}
+                    className={cn(
+                      "cursor-pointer",
+                      rate === playbackRate && "bg-white/10"
+                    )}
                   >
-                    {playbackRate}x
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="bg-zinc-900 border-zinc-800">
-                  {PLAYBACK_RATES.map((rate) => (
-                    <DropdownMenuItem
-                      key={rate}
-                      onClick={() => handlePlaybackRateChange(rate)}
-                      className={cn(
-                        "cursor-pointer",
-                        rate === playbackRate && "bg-zinc-800"
-                      )}
-                    >
-                      {rate}x
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
+                    {rate}x
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
 
-              {/* PiP */}
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={togglePiP}
-                className={cn(
-                  "h-10 w-10 text-white hover:bg-white/20",
-                  isPiP && "bg-white/20"
-                )}
-              >
-                <PictureInPicture2 className="h-5 w-5" />
-              </Button>
+            {/* PiP */}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={togglePiP}
+              className={cn(
+                "h-10 w-10 text-white hover:bg-white/10 rounded-full",
+                isPiP && "bg-white/20"
+              )}
+            >
+              <PictureInPicture2 className="h-5 w-5" />
+            </Button>
 
-              {/* Fullscreen */}
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={toggleFullscreen}
-                className="h-10 w-10 text-white hover:bg-white/20"
-              >
-                {isFullscreen ? (
-                  <Minimize className="h-5 w-5" />
-                ) : (
-                  <Maximize className="h-5 w-5" />
-                )}
-              </Button>
-            </div>
+            {/* Fullscreen */}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={toggleFullscreen}
+              className="h-10 w-10 text-white hover:bg-white/10 rounded-full"
+            >
+              {isFullscreen ? (
+                <Minimize className="h-5 w-5" />
+              ) : (
+                <Maximize className="h-5 w-5" />
+              )}
+            </Button>
           </div>
         </div>
       </div>

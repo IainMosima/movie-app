@@ -18,6 +18,7 @@ export interface EngineSettings {
   maxConnections: number;
   cleanupDelaySeconds: number;
   prebufferSeconds: number;
+  bufferSizeMB: number;
 }
 
 // Search result types

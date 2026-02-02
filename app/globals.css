@@ -143,3 +143,31 @@
 .scrollbar-visible::-webkit-scrollbar-thumb:hover {
   background: #ef4444;
 }
+
+/* Netflix-style skip animations */
+@keyframes rotate-back {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(-360deg); }
+}
+
+@keyframes rotate-forward {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(-50%) scale(0.8); }
+  to { opacity: 1; transform: translateY(-50%) scale(1); }
+}
+
+.animate-rotate-back {
+  animation: rotate-back 0.4s ease-out;
+}
+
+.animate-rotate-forward {
+  animation: rotate-forward 0.4s ease-out;
+}
+
+.animate-fade-in {
+  animation: fade-in 0.2s ease-out;
+}

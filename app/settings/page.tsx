@@ -16,6 +16,7 @@ export default function SettingsPage() {
   const [uploadLimit, setUploadLimit] = useState(-1);
   const [cleanupDelay, setCleanupDelay] = useState(30);
   const [prebufferSeconds, setPrebufferSeconds] = useState(30);
+  const [bufferSizeMB, setBufferSizeMB] = useState(100);
   const [isSaving, setIsSaving] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
 
@@ -27,6 +28,7 @@ export default function SettingsPage() {
       setUploadLimit(settings.uploadLimit);
       setCleanupDelay(settings.cleanupDelaySeconds);
       setPrebufferSeconds(settings.prebufferSeconds);
+      setBufferSizeMB(settings.bufferSizeMB || 100);
     }
   }, [settings]);
 
@@ -39,6 +41,7 @@ export default function SettingsPage() {
         uploadLimit,
         cleanupDelaySeconds: cleanupDelay,
         prebufferSeconds,
+        bufferSizeMB,
       });
       toast.success("Settings saved");
     } catch (err) {
@@ -166,23 +169,43 @@ export default function SettingsPage() {
 
           {/* Buffering settings */}
           <Card className="p-6 bg-zinc-900/50 border-zinc-800">
-            <h2 className="font-semibold mb-4">Playback</h2>
-            <div>
-              <label className="text-sm text-zinc-400 mb-2 block">
-                Prebuffer Duration (seconds)
-              </label>
-              <Input
-                type="number"
-                value={prebufferSeconds}
-                onChange={(e) => setPrebufferSeconds(Number(e.target.value))}
-                min={0}
-                max={120}
-                className="bg-zinc-800 border-zinc-700 w-32"
-              />
-              <p className="text-xs text-zinc-600 mt-1">
-                Seconds of video to buffer before playback starts (0-120). Higher
-                values mean smoother 4K playback but longer initial wait.
-              </p>
+            <h2 className="font-semibold mb-4">Playback & Buffering</h2>
+            <div className="space-y-6">
+              <div>
+                <label className="text-sm text-zinc-400 mb-2 block">
+                  Buffer Size (MB)
+                </label>
+                <Input
+                  type="number"
+                  value={bufferSizeMB}
+                  onChange={(e) => setBufferSizeMB(Number(e.target.value))}
+                  min={50}
+                  max={500}
+                  className="bg-zinc-800 border-zinc-700 w-32"
+                />
+                <p className="text-xs text-zinc-600 mt-1">
+                  Amount of data to buffer ahead (50-500 MB). Higher values give more
+                  viewing time before rebuffering. Recommended: 150-200 MB for 4K.
+                </p>
+              </div>
+
+              <div>
+                <label className="text-sm text-zinc-400 mb-2 block">
+                  Prebuffer Duration (seconds)
+                </label>
+                <Input
+                  type="number"
+                  value={prebufferSeconds}
+                  onChange={(e) => setPrebufferSeconds(Number(e.target.value))}
+                  min={0}
+                  max={120}
+                  className="bg-zinc-800 border-zinc-700 w-32"
+                />
+                <p className="text-xs text-zinc-600 mt-1">
+                  Seconds to wait before playback starts (0-120). Higher values
+                  mean smoother playback but longer initial wait.
+                </p>
+              </div>
             </div>
           </Card>
 
