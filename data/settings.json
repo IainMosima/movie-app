@@ -1,0 +1,7 @@
+{
+  "downloadLimit": -1,
+  "uploadLimit": -1,
+  "maxConnections": 55,
+  "cleanupDelaySeconds": 30,
+  "prebufferSeconds": 30
+}
