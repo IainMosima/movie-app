@@ -171,3 +171,16 @@
 .animate-fade-in {
   animation: fade-in 0.2s ease-out;
 }
+
+/* Ensure cursor is visible on TV browsers */
+@media (hover: none), (pointer: coarse) {
+  .tv-show-cursor,
+  .tv-show-cursor * {
+    cursor: auto;
+  }
+  .tv-show-cursor button,
+  .tv-show-cursor [role="button"],
+  .tv-show-cursor a {
+    cursor: pointer;
+  }
+}

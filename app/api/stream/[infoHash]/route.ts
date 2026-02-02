@@ -109,19 +109,15 @@ export async function GET(
       });
     }
 
-    // Range request
-    const [start, requestedEnd] = parseRange(rangeHeader, fileSize);
-
-    // Cap chunk size to buffer setting to prevent stalling on large requests
-    const maxChunkBytes = (settings.bufferSizeMB || 200) * 1024 * 1024;
-    const end = Math.min(requestedEnd, start + maxChunkBytes - 1);
+    // Range request - return exactly what browser asks for (no chunking)
+    const [start, end] = parseRange(rangeHeader, fileSize);
     const chunkSize = end - start + 1;
 
-    // Ensure file is selected for download (WebTorrent auto-prioritizes active streams)
+    // Ensure file is selected for download
     file.select();
 
     console.log(
-      `Stream ${file.name}: ${start}-${end}/${fileSize} (${(chunkSize / 1024 / 1024).toFixed(1)}MB chunk, requested ${((requestedEnd - start + 1) / 1024 / 1024).toFixed(1)}MB)`
+      `Stream ${file.name}: ${start}-${end}/${fileSize} (${(chunkSize / 1024 / 1024).toFixed(1)}MB)`
     );
 
     const stream = file.createReadStream({ start, end });

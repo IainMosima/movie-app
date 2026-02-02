@@ -44,7 +44,11 @@ export default function HomePage() {
 
   const [isLoadingPlay, setIsLoadingPlay] = useState(false);
 
-  const handlePlayMagnet = async (magnet: string, title?: string) => {
+  const handlePlayMagnet = async (
+    magnet: string,
+    title?: string,
+    options: { forcePicker?: boolean } = {}
+  ) => {
     // Extract name from magnet if not provided
     if (!title) {
       const dnMatch = magnet.match(/dn=([^&]+)/);
@@ -71,7 +75,7 @@ export default function HomePage() {
       const data = await res.json();
       const videoFiles = data.files.filter((f: { isVideo: boolean }) => f.isVideo);
 
-      if (videoFiles.length === 1) {
+      if (!options.forcePicker && videoFiles.length === 1) {
         // Single video - play directly
         const fileIndex = data.mainVideoIndex ?? 0;
         router.push(
@@ -89,6 +93,10 @@ export default function HomePage() {
     } finally {
       setIsLoadingPlay(false);
     }
+  };
+
+  const handleOpenListing = (magnet: string, title?: string) => {
+    handlePlayMagnet(magnet, title, { forcePicker: true });
   };
 
   const handleSelectFile = (
@@ -266,6 +274,7 @@ export default function HomePage() {
                   key={item.id}
                   item={item}
                   onPlay={() => handlePlayMagnet(item.magnet, item.name)}
+                  onOpen={() => handleOpenListing(item.magnet, item.name)}
                   onDelete={() => handleDelete(item.id, item.name)}
                 />
               ))}
@@ -291,10 +300,12 @@ export default function HomePage() {
 function LibraryCard({
   item,
   onPlay,
+  onOpen,
   onDelete,
 }: {
   item: LibraryItem;
   onPlay: () => void;
+  onOpen: () => void;
   onDelete: () => void;
 }) {
   const [isDeleting, setIsDeleting] = useState(false);
@@ -308,12 +319,16 @@ function LibraryCard({
   return (
     <Card
       className="group p-4 bg-zinc-900/50 border-zinc-800 hover:bg-zinc-800/50 hover:border-zinc-700 transition-all cursor-pointer"
-      onClick={onPlay}
+      onClick={onOpen}
     >
       <div className="flex items-center gap-4">
         <Button
           size="icon"
           className="h-12 w-12 rounded-lg bg-zinc-800 group-hover:bg-red-600 transition-colors shrink-0"
+          onClick={(e) => {
+            e.stopPropagation();
+            onPlay();
+          }}
         >
           <Play className="h-5 w-5 fill-current" />
         </Button>

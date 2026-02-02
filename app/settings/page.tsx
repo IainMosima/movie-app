@@ -16,7 +16,7 @@ export default function SettingsPage() {
   const [uploadLimit, setUploadLimit] = useState(-1);
   const [cleanupDelay, setCleanupDelay] = useState(30);
   const [prebufferSeconds, setPrebufferSeconds] = useState(30);
-  const [bufferSizeMB, setBufferSizeMB] = useState(100);
+  const [bufferSizeMB, setBufferSizeMB] = useState(300);
   const [isSaving, setIsSaving] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
 
@@ -28,7 +28,7 @@ export default function SettingsPage() {
       setUploadLimit(settings.uploadLimit);
       setCleanupDelay(settings.cleanupDelaySeconds);
       setPrebufferSeconds(settings.prebufferSeconds);
-      setBufferSizeMB(settings.bufferSizeMB || 100);
+      setBufferSizeMB(settings.bufferSizeMB || 300);
     }
   }, [settings]);
 

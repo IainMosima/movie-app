@@ -11,7 +11,7 @@ const DEFAULT_SETTINGS: EngineSettings = {
   maxConnections: 55,
   cleanupDelaySeconds: 30,
   prebufferSeconds: 30,
-  bufferSizeMB: 200, // 200MB default buffer for smooth 4K
+  bufferSizeMB: 300, // 300MB default buffer for smoother playback
 };
 
 function ensureSettingsFile(): void {
@@ -23,7 +23,13 @@ function ensureSettingsFile(): void {
 export function getSettings(): EngineSettings {
   ensureSettingsFile();
   const data = readFileSync(SETTINGS_PATH, "utf-8");
-  return { ...DEFAULT_SETTINGS, ...JSON.parse(data) } as EngineSettings;
+  const parsed = JSON.parse(data) as Partial<EngineSettings>;
+  const merged = { ...DEFAULT_SETTINGS, ...parsed } as EngineSettings;
+  // Persist new defaults if missing in stored settings
+  if (JSON.stringify(parsed) !== JSON.stringify(merged)) {
+    writeFileSync(SETTINGS_PATH, JSON.stringify(merged, null, 2));
+  }
+  return merged;
 }
 
 export function updateSettings(
