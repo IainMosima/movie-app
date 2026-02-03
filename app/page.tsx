@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { FilePicker } from "@/components/file-picker";
 import { MagnetInput } from "@/components/magnet-input";
@@ -28,7 +28,26 @@ import { Input } from "@/components/ui/input";
 import type { LibraryItem } from "@/types";
 
 export default function HomePage() {
+  return (
+    <Suspense fallback={<HomePageLoading />}>
+      <HomePageContent />
+    </Suspense>
+  );
+}
+
+function HomePageLoading() {
+  return (
+    <main className="min-h-screen pt-14">
+      <div className="flex justify-center py-24">
+        <Loader2 className="h-8 w-8 animate-spin text-zinc-500" />
+      </div>
+    </main>
+  );
+}
+
+function HomePageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { items, isLoading: libraryLoading, addItem, deleteItem } = useLibrary();
 
   // File picker state
@@ -43,6 +62,25 @@ export default function HomePage() {
   const [isAdding, setIsAdding] = useState(false);
 
   const [isLoadingPlay, setIsLoadingPlay] = useState(false);
+
+  // Handle returning from watch page - check localStorage for last show
+  useEffect(() => {
+    const lastShow = localStorage.getItem("lastShow");
+    if (lastShow) {
+      try {
+        const { magnet, title } = JSON.parse(lastShow);
+        if (magnet) {
+          setSelectedMagnet(magnet);
+          setSelectedTitle(title || "");
+          setPickerOpen(true);
+          // Clear after opening
+          localStorage.removeItem("lastShow");
+        }
+      } catch {
+        localStorage.removeItem("lastShow");
+      }
+    }
+  }, []);
 
   const handlePlayMagnet = async (
     magnet: string,
@@ -77,6 +115,8 @@ export default function HomePage() {
 
       if (!options.forcePicker && videoFiles.length === 1) {
         // Single video - play directly
+        // Save for back navigation
+        localStorage.setItem("lastShow", JSON.stringify({ magnet, title }));
         const fileIndex = data.mainVideoIndex ?? 0;
         router.push(
           `/watch/${data.infoHash}?title=${encodeURIComponent(title || data.name)}&file=${fileIndex}`
@@ -104,6 +144,12 @@ export default function HomePage() {
     fileIndex: number,
     fileName: string
   ) => {
+    // Save current show to localStorage for back navigation
+    localStorage.setItem("lastShow", JSON.stringify({
+      magnet: selectedMagnet,
+      title: selectedTitle || fileName,
+    }));
+
     setPickerOpen(false);
     const title = selectedTitle || fileName;
     router.push(
@@ -151,7 +197,7 @@ export default function HomePage() {
       {isLoadingPlay && (
         <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center">
           <div className="flex flex-col items-center gap-4">
-            <Loader2 className="h-12 w-12 animate-spin text-red-500" />
+            <Loader2 className="h-12 w-12 animate-spin text-purple-500" />
             <p className="text-zinc-300">Loading...</p>
           </div>
         </div>
@@ -324,7 +370,7 @@ function LibraryCard({
       <div className="flex items-center gap-4">
         <Button
           size="icon"
-          className="h-12 w-12 rounded-lg bg-zinc-800 group-hover:bg-red-600 transition-colors shrink-0"
+          className="h-12 w-12 rounded-lg bg-zinc-800 group-hover:bg-purple-600 transition-colors shrink-0"
           onClick={(e) => {
             e.stopPropagation();
             onPlay();

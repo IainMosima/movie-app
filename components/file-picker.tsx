@@ -11,6 +11,8 @@ import {
   Star,
   Users,
   Wifi,
+  ChevronUp,
+  ChevronDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -67,6 +69,44 @@ export function FilePicker({
   const [statusMessage, setStatusMessage] = useState("Starting...");
   const pollRef = useRef<NodeJS.Timeout | null>(null);
   const startTimeRef = useRef<number>(0);
+
+  // Scroll controls for TV
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const [canScrollUp, setCanScrollUp] = useState(false);
+  const [canScrollDown, setCanScrollDown] = useState(false);
+
+  const updateScrollState = () => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    setCanScrollUp(container.scrollTop > 0);
+    setCanScrollDown(
+      container.scrollTop < container.scrollHeight - container.clientHeight - 5
+    );
+  };
+
+  const scrollBy = (amount: number) => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    container.scrollBy({ top: amount, behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    // Initial check
+    updateScrollState();
+
+    container.addEventListener("scroll", updateScrollState);
+    return () => container.removeEventListener("scroll", updateScrollState);
+  }, [files]);
+
+  // Update scroll state when files change
+  useEffect(() => {
+    // Small delay to let DOM update
+    const timer = setTimeout(updateScrollState, 100);
+    return () => clearTimeout(timer);
+  }, [files]);
 
   useEffect(() => {
     if (open && magnet) {
@@ -184,7 +224,7 @@ export function FilePicker({
         {isLoading && (
           <div className="flex flex-col items-center justify-center py-16 gap-4">
             <div className="relative">
-              <Loader2 className="h-10 w-10 animate-spin text-red-500" />
+              <Loader2 className="h-10 w-10 animate-spin text-purple-500" />
               {status?.peers !== undefined && status.peers > 0 && (
                 <div className="absolute -top-1 -right-1 bg-green-500 text-white text-[10px] rounded-full h-5 w-5 flex items-center justify-center font-bold">
                   {status.peers}
@@ -257,7 +297,60 @@ export function FilePicker({
               </p>
             </div>
 
-            <div className="flex-1 -mx-6 px-6 overflow-y-auto scrollbar-visible" style={{ scrollbarWidth: 'auto', scrollbarColor: '#dc2626 #27272a' }}>
+            {/* Scroll container with TV-friendly buttons */}
+            <div className="flex-1 flex gap-2 min-h-0">
+              {/* Scroll buttons - left side (TV-friendly) */}
+              <div className="flex flex-col justify-center gap-3 py-4">
+                <button
+                  type="button"
+                  onClick={() => scrollBy(-250)}
+                  onMouseUp={() => canScrollUp && scrollBy(-250)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      scrollBy(-250);
+                    }
+                  }}
+                  disabled={!canScrollUp}
+                  className={cn(
+                    "h-14 w-14 rounded-xl flex items-center justify-center transition-all",
+                    "focus:outline-none focus:ring-2 focus:ring-purple-500",
+                    canScrollUp
+                      ? "bg-zinc-800 hover:bg-purple-600 active:bg-purple-700 text-white cursor-pointer"
+                      : "bg-zinc-800/50 text-zinc-600 cursor-not-allowed"
+                  )}
+                >
+                  <ChevronUp className="h-7 w-7" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => scrollBy(250)}
+                  onMouseUp={() => canScrollDown && scrollBy(250)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      scrollBy(250);
+                    }
+                  }}
+                  disabled={!canScrollDown}
+                  className={cn(
+                    "h-14 w-14 rounded-xl flex items-center justify-center transition-all",
+                    "focus:outline-none focus:ring-2 focus:ring-purple-500",
+                    canScrollDown
+                      ? "bg-zinc-800 hover:bg-purple-600 active:bg-purple-700 text-white cursor-pointer"
+                      : "bg-zinc-800/50 text-zinc-600 cursor-not-allowed"
+                  )}
+                >
+                  <ChevronDown className="h-7 w-7" />
+                </button>
+              </div>
+
+              {/* File list */}
+              <div
+                ref={scrollContainerRef}
+                className="flex-1 overflow-y-auto scrollbar-visible -mr-6 pr-6"
+                style={{ scrollbarWidth: 'auto', scrollbarColor: '#8b5cf6 #27272a' }}
+              >
               <div className="space-y-4 py-2 pr-2">
                 {/* Video files */}
                 {videoFiles.length > 0 && (
@@ -274,9 +367,9 @@ export function FilePicker({
                           <button
                             key={file.index}
                             onClick={() => handlePlay(file.index)}
-                            className="group w-full flex items-center gap-4 p-4 rounded-xl text-left transition-all hover:bg-red-600/20 border-2 border-transparent hover:border-red-600 hover:scale-[1.01] focus:bg-red-600/20 focus:border-red-600 focus:outline-none"
+                            className="group w-full flex items-center gap-4 p-4 rounded-xl text-left transition-all hover:bg-purple-600/20 border-2 border-transparent hover:border-purple-600 hover:scale-[1.01] focus:bg-purple-600/20 focus:border-purple-600 focus:outline-none"
                           >
-                            <div className="h-12 w-12 rounded-xl flex items-center justify-center shrink-0 bg-zinc-800 group-hover:bg-red-600 transition-colors">
+                            <div className="h-12 w-12 rounded-xl flex items-center justify-center shrink-0 bg-zinc-800 group-hover:bg-purple-600 transition-colors">
                               <Icon className="h-6 w-6" />
                             </div>
                             <div className="flex-1 min-w-0">
@@ -301,7 +394,7 @@ export function FilePicker({
                                 )}
                               </div>
                             </div>
-                            <Play className="h-6 w-6 text-zinc-600 group-hover:text-red-400 shrink-0 transition-colors" />
+                            <Play className="h-6 w-6 text-zinc-600 group-hover:text-purple-400 shrink-0 transition-colors" />
                           </button>
                         );
                       })}
@@ -336,6 +429,7 @@ export function FilePicker({
                     </div>
                   </div>
                 )}
+              </div>
               </div>
             </div>
 

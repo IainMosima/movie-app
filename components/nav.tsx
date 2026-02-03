@@ -24,7 +24,7 @@ export function Nav() {
         <div className="flex items-center h-14">
           {/* Logo */}
           <Link href="/" className="flex items-center gap-2 mr-8">
-            <div className="h-8 w-8 bg-red-600 rounded-lg flex items-center justify-center text-lg">
+            <div className="h-8 w-8 bg-purple-600 rounded-lg flex items-center justify-center text-lg">
               🛸
             </div>
             <span className="font-bold text-lg hidden sm:block">Spaceflix</span>

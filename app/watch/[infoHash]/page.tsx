@@ -91,6 +91,7 @@ export default function WatchPage({ params }: WatchPageProps) {
   }, [infoHash]);
 
   const handleClose = useCallback(() => {
+    // Go back to home - localStorage will handle reopening the episode picker
     router.push("/");
   }, [router]);
 

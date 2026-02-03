@@ -73,10 +73,9 @@ export function VideoPlayer({
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const media = window.matchMedia("(hover: none), (pointer: coarse)");
 
-    // Also check for TV-like characteristics
-    const isLikelyTV = () => {
+    // Check for actual TV by user agent only (not screen size)
+    const isActualTV = () => {
       const ua = navigator.userAgent.toLowerCase();
       return (
         ua.includes("tv") ||
@@ -84,27 +83,22 @@ export function VideoPlayer({
         ua.includes("hisense") ||
         ua.includes("tizen") ||
         ua.includes("webos") ||
-        ua.includes("smart") ||
+        ua.includes("smart-tv") ||
+        ua.includes("smarttv") ||
         ua.includes("netcast") ||
-        window.innerWidth >= 1280 && !("ontouchstart" in window) && media.matches
+        ua.includes("viera") ||
+        ua.includes("nettv") ||
+        ua.includes("appletv") ||
+        ua.includes("roku") ||
+        ua.includes("firetv") ||
+        ua.includes("googletv")
       );
     };
 
-    const update = () => setPrefersAlwaysOnControls(media.matches || isLikelyTV());
+    const update = () => setPrefersAlwaysOnControls(isActualTV());
     update();
 
-    if (typeof media.addEventListener === "function") {
-      media.addEventListener("change", update);
-    } else {
-      (media as MediaQueryList & { addListener: (cb: () => void) => void }).addListener(update);
-    }
-    return () => {
-      if (typeof media.removeEventListener === "function") {
-        media.removeEventListener("change", update);
-      } else {
-        (media as MediaQueryList & { removeListener: (cb: () => void) => void }).removeListener(update);
-      }
-    };
+    // No need for media query listener since we only check user agent
   }, []);
 
   useEffect(() => {
@@ -663,16 +657,21 @@ export function VideoPlayer({
       }}
       onKeyDown={(e) => handleKeyDown(e.nativeEvent)}
     >
-      {/* Video - use native controls on TV for better seeking support */}
+      {/* Video */}
       <video
         ref={videoRef}
         src={src}
         className="w-full h-full"
         autoPlay={autoPlay}
         playsInline
-        controls={prefersAlwaysOnControls}
-        controlsList="nodownload noplaybackrate"
-        onClick={!prefersAlwaysOnControls ? handleVideoTap : undefined}
+        onClick={(e) => {
+          // On TV, just toggle play. On desktop, use double-tap logic.
+          if (prefersAlwaysOnControls) {
+            togglePlay();
+          } else {
+            handleVideoTap(e);
+          }
+        }}
         onTouchStart={() => setShowControls(true)}
         onPointerDown={() => {
           setShowControls(true);
@@ -720,25 +719,6 @@ export function VideoPlayer({
       )}
 
 
-      {/* Center play button (when paused) */}
-      {!isPlaying && !isBuffering && (
-        <button
-          type="button"
-          {...handleTVClick(togglePlay)}
-          className="absolute inset-0 flex items-center justify-center outline-none cursor-pointer z-10"
-        >
-          <div className={cn(
-            "bg-white/10 backdrop-blur-sm rounded-full flex items-center justify-center transition-colors",
-            "hover:bg-white/20 active:bg-white/40 focus:bg-white/30 focus:ring-4 focus:ring-white/50",
-            prefersAlwaysOnControls ? "h-28 w-28" : "h-20 w-20"
-          )}>
-            <Play className={cn(
-              "text-white fill-white ml-1",
-              prefersAlwaysOnControls ? "h-14 w-14" : "h-10 w-10"
-            )} />
-          </div>
-        </button>
-      )}
 
       {/* Title bar at top */}
       {title && (
@@ -752,67 +732,79 @@ export function VideoPlayer({
         </div>
       )}
 
-      {/* Netflix-style skip buttons in center - hide on TV when using native controls */}
+      {/* Center controls: Skip Back | Play/Pause | Skip Forward */}
       <div
         className={cn(
-          "absolute inset-0 flex items-center justify-center gap-32 pointer-events-none transition-opacity duration-300",
-          showControls && !isBuffering && !prefersAlwaysOnControls ? "opacity-100" : "opacity-0"
+          "absolute inset-0 flex items-center justify-center pointer-events-none transition-opacity duration-300",
+          showControls && !isBuffering ? "opacity-100" : "opacity-0"
         )}
       >
-        {/* Skip back */}
-        <button
-          type="button"
-          {...handleTVClick(() => skip(-10))}
-          className={cn(
-            "pointer-events-auto flex flex-col items-center gap-1 group outline-none cursor-pointer",
-            prefersAlwaysOnControls && "gap-2"
-          )}
-        >
-          <div className={cn(
-            "h-16 w-16 rounded-full border-2 border-white/30 flex items-center justify-center transition-all",
-            "hover:border-white/60 hover:bg-white/10 active:bg-white/30",
-            "group-focus:border-white group-focus:bg-white/20 group-focus:ring-4 group-focus:ring-white/30",
-            prefersAlwaysOnControls && "h-24 w-24"
-          )}>
-            <svg className={cn("h-8 w-8 text-white", prefersAlwaysOnControls && "h-12 w-12")} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <div className={cn(
+          "flex items-center gap-4",
+          prefersAlwaysOnControls && "gap-6"
+        )}>
+          {/* Skip back 10s */}
+          <button
+            type="button"
+            {...handleTVClick(() => skip(-10))}
+            className={cn(
+              "pointer-events-auto flex items-center justify-center outline-none cursor-pointer rounded-full transition-all",
+              "bg-black/40 hover:bg-black/60 active:bg-black/80",
+              "focus:ring-2 focus:ring-white",
+              prefersAlwaysOnControls ? "h-16 w-16" : "h-12 w-12"
+            )}
+          >
+            <svg className={cn("text-white", prefersAlwaysOnControls ? "h-8 w-8" : "h-6 w-6")} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M12.5 8.5L7.5 12l5 3.5V8.5z" fill="currentColor" stroke="none"/>
               <path d="M12 4V2" strokeLinecap="round"/>
               <path d="M12 4C7.58 4 4 7.58 4 12s3.58 8 8 8 8-3.58 8-8" strokeLinecap="round"/>
             </svg>
-          </div>
-          <span className={cn("text-white text-sm font-medium", prefersAlwaysOnControls && "text-lg")}>-10s</span>
-        </button>
+          </button>
 
-        {/* Skip forward */}
-        <button
-          type="button"
-          {...handleTVClick(() => skip(10))}
-          className={cn(
-            "pointer-events-auto flex flex-col items-center gap-1 group outline-none cursor-pointer",
-            prefersAlwaysOnControls && "gap-2"
-          )}
-        >
-          <div className={cn(
-            "h-16 w-16 rounded-full border-2 border-white/30 flex items-center justify-center transition-all",
-            "hover:border-white/60 hover:bg-white/10 active:bg-white/30",
-            "group-focus:border-white group-focus:bg-white/20 group-focus:ring-4 group-focus:ring-white/30",
-            prefersAlwaysOnControls && "h-24 w-24"
-          )}>
-            <svg className={cn("h-8 w-8 text-white", prefersAlwaysOnControls && "h-12 w-12")} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+          {/* Play/Pause - larger center button */}
+          <button
+            type="button"
+            {...handleTVClick(togglePlay)}
+            className={cn(
+              "pointer-events-auto flex items-center justify-center outline-none cursor-pointer rounded-full transition-all",
+              "bg-white/20 hover:bg-white/30 active:bg-white/40 backdrop-blur-sm",
+              "focus:ring-4 focus:ring-white/50",
+              prefersAlwaysOnControls ? "h-24 w-24" : "h-16 w-16"
+            )}
+          >
+            {isPlaying ? (
+              <Pause className={cn("text-white", prefersAlwaysOnControls ? "h-12 w-12" : "h-8 w-8")} />
+            ) : (
+              <Play className={cn("text-white fill-white ml-1", prefersAlwaysOnControls ? "h-12 w-12" : "h-8 w-8")} />
+            )}
+          </button>
+
+          {/* Skip forward 10s */}
+          <button
+            type="button"
+            {...handleTVClick(() => skip(10))}
+            className={cn(
+              "pointer-events-auto flex items-center justify-center outline-none cursor-pointer rounded-full transition-all",
+              "bg-black/40 hover:bg-black/60 active:bg-black/80",
+              "focus:ring-2 focus:ring-white",
+              prefersAlwaysOnControls ? "h-16 w-16" : "h-12 w-12"
+            )}
+          >
+            <svg className={cn("text-white", prefersAlwaysOnControls ? "h-8 w-8" : "h-6 w-6")} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M11.5 8.5l5 3.5-5 3.5V8.5z" fill="currentColor" stroke="none"/>
               <path d="M12 4V2" strokeLinecap="round"/>
               <path d="M12 4c4.42 0 8 3.58 8 8s-3.58 8-8 8-8-3.58-8-8" strokeLinecap="round"/>
             </svg>
-          </div>
-          <span className={cn("text-white text-sm font-medium", prefersAlwaysOnControls && "text-lg")}>+10s</span>
-        </button>
+          </button>
+        </div>
       </div>
 
-      {/* Bottom controls - hide on TV when using native controls */}
+      {/* Bottom controls with progress bar */}
       <div
         className={cn(
-          "absolute inset-x-0 bottom-0 bg-gradient-to-t from-black via-black/60 to-transparent transition-opacity duration-300 pb-4 pt-20",
-          showControls && !prefersAlwaysOnControls ? "opacity-100" : "opacity-0 pointer-events-none"
+          "absolute inset-x-0 bottom-0 bg-gradient-to-t from-black via-black/60 to-transparent transition-opacity duration-300",
+          showControls ? "opacity-100" : "opacity-0 pointer-events-none",
+          prefersAlwaysOnControls ? "pb-8 pt-16" : "pb-4 pt-20"
         )}
         onClick={(e) => e.stopPropagation()}
       >
@@ -848,7 +840,7 @@ export function VideoPlayer({
             {/* Current progress */}
             <div
               className={cn(
-                "absolute bg-red-500 rounded-full transition-all",
+                "absolute bg-purple-500 rounded-full transition-all",
                 prefersAlwaysOnControls ? "h-2" : "h-1 group-hover/progress:h-1.5"
               )}
               style={{ width: `${(currentTime / (duration || 1)) * 100}%` }}
@@ -868,65 +860,59 @@ export function VideoPlayer({
             )} />
           </div>
 
-          {/* Controls row */}
-          <div className={cn("flex items-center gap-4", prefersAlwaysOnControls && "gap-6")}>
-            {/* Play/Pause */}
-            <button
-              type="button"
-              {...handleTVClick(togglePlay)}
-              className={cn(
-                "flex items-center justify-center text-white rounded-full cursor-pointer",
-                "hover:bg-white/10 active:bg-white/30",
-                "focus:bg-white/20 focus:ring-2 focus:ring-white focus:outline-none",
-                prefersAlwaysOnControls ? "h-16 w-16" : "h-12 w-12"
-              )}
-            >
-              {isPlaying ? (
-                <Pause className={cn(prefersAlwaysOnControls ? "h-9 w-9" : "h-7 w-7")} />
-              ) : (
-                <Play className={cn("fill-current ml-1", prefersAlwaysOnControls ? "h-9 w-9" : "h-7 w-7")} />
-              )}
-            </button>
-
-            {/* Volume */}
-            <div className="flex items-center gap-2 group/volume">
+          {/* Controls row - simplified on TV */}
+          <div className={cn("flex items-center gap-4", prefersAlwaysOnControls && "justify-center gap-6")}>
+            {/* Play/Pause - only show on desktop */}
+            {!prefersAlwaysOnControls && (
               <button
                 type="button"
-                {...handleTVClick(toggleMute)}
-                className={cn(
-                  "flex items-center justify-center text-white rounded-full cursor-pointer",
-                  "hover:bg-white/10 active:bg-white/30",
-                  "focus:bg-white/20 focus:ring-2 focus:ring-white focus:outline-none",
-                  prefersAlwaysOnControls ? "h-14 w-14" : "h-10 w-10"
-                )}
+                {...handleTVClick(togglePlay)}
+                className="flex items-center justify-center text-white rounded-full cursor-pointer h-12 w-12 hover:bg-white/10 active:bg-white/30 focus:bg-white/20 focus:ring-2 focus:ring-white focus:outline-none"
               >
-                {isMuted || volume === 0 ? (
-                  <VolumeX className={cn(prefersAlwaysOnControls ? "h-7 w-7" : "h-5 w-5")} />
+                {isPlaying ? (
+                  <Pause className="h-7 w-7" />
                 ) : (
-                  <Volume2 className={cn(prefersAlwaysOnControls ? "h-7 w-7" : "h-5 w-5")} />
+                  <Play className="h-7 w-7 fill-current ml-1" />
                 )}
               </button>
-              <div className={cn(
-                "w-0 overflow-hidden group-hover/volume:w-20 transition-all duration-200",
-                prefersAlwaysOnControls && "w-28"
-              )}>
-                <Slider
-                  value={[isMuted ? 0 : volume]}
-                  max={1}
-                  step={0.01}
-                  onValueChange={handleVolumeChange}
-                  className={cn("cursor-pointer", prefersAlwaysOnControls && "[&_[role=slider]]:h-5 [&_[role=slider]]:w-5")}
-                />
-              </div>
-            </div>
+            )}
 
-            {/* Time */}
-            <span className={cn("text-sm text-white/90 tabular-nums", prefersAlwaysOnControls && "text-base")}>
+            {/* Volume - only show on desktop */}
+            {!prefersAlwaysOnControls && (
+              <div className="flex items-center gap-2 group/volume">
+                <button
+                  type="button"
+                  {...handleTVClick(toggleMute)}
+                  className="flex items-center justify-center text-white rounded-full cursor-pointer h-10 w-10 hover:bg-white/10 active:bg-white/30 focus:bg-white/20 focus:ring-2 focus:ring-white focus:outline-none"
+                >
+                  {isMuted || volume === 0 ? (
+                    <VolumeX className="h-5 w-5" />
+                  ) : (
+                    <Volume2 className="h-5 w-5" />
+                  )}
+                </button>
+                <div className="w-0 overflow-hidden group-hover/volume:w-20 transition-all duration-200">
+                  <Slider
+                    value={[isMuted ? 0 : volume]}
+                    max={1}
+                    step={0.01}
+                    onValueChange={handleVolumeChange}
+                    className="cursor-pointer"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Time - always show */}
+            <span className={cn(
+              "text-white/90 tabular-nums",
+              prefersAlwaysOnControls ? "text-xl" : "text-sm"
+            )}>
               {formatDuration(currentTime)} / {formatDuration(duration)}
             </span>
 
-            {/* Spacer */}
-            <div className="flex-1" />
+            {/* Spacer - only on desktop */}
+            {!prefersAlwaysOnControls && <div className="flex-1" />}
 
             {/* Playback speed - hide on TV */}
             {!prefersAlwaysOnControls && (
@@ -975,23 +961,20 @@ export function VideoPlayer({
               </button>
             )}
 
-            {/* Fullscreen */}
-            <button
-              type="button"
-              {...handleTVClick(toggleFullscreen)}
-              className={cn(
-                "flex items-center justify-center text-white rounded-full cursor-pointer",
-                "hover:bg-white/10 active:bg-white/30",
-                "focus:bg-white/20 focus:ring-2 focus:ring-white focus:outline-none",
-                prefersAlwaysOnControls ? "h-16 w-16" : "h-10 w-10"
-              )}
-            >
-              {isFullscreen ? (
-                <Minimize className={cn(prefersAlwaysOnControls ? "h-8 w-8" : "h-5 w-5")} />
-              ) : (
-                <Maximize className={cn(prefersAlwaysOnControls ? "h-8 w-8" : "h-5 w-5")} />
-              )}
-            </button>
+            {/* Fullscreen - hide on TV as it doesn't work reliably */}
+            {!prefersAlwaysOnControls && (
+              <button
+                type="button"
+                {...handleTVClick(toggleFullscreen)}
+                className="flex items-center justify-center text-white rounded-full cursor-pointer h-10 w-10 hover:bg-white/10 active:bg-white/30 focus:bg-white/20 focus:ring-2 focus:ring-white focus:outline-none"
+              >
+                {isFullscreen ? (
+                  <Minimize className="h-5 w-5" />
+                ) : (
+                  <Maximize className="h-5 w-5" />
+                )}
+              </button>
+            )}
           </div>
         </div>
       </div>

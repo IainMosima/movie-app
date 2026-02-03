@@ -82,37 +82,38 @@
 }
 
 .dark {
-  --background: oklch(0 0 0);
+  /* iPhone 14 Pro Deep Purple Theme */
+  --background: oklch(0.08 0.02 290);
   --foreground: oklch(0.985 0 0);
-  --card: oklch(0.15 0.003 285.823);
+  --card: oklch(0.12 0.025 290);
   --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.15 0.003 285.823);
+  --popover: oklch(0.12 0.025 290);
   --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.92 0.004 286.32);
-  --primary-foreground: oklch(0.21 0.006 285.885);
-  --secondary: oklch(0.22 0.004 286.033);
+  --primary: oklch(0.65 0.2 295);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.18 0.03 290);
   --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.22 0.004 286.033);
-  --muted-foreground: oklch(0.705 0.015 286.067);
-  --accent: oklch(0.22 0.004 286.033);
+  --muted: oklch(0.18 0.03 290);
+  --muted-foreground: oklch(0.65 0.02 290);
+  --accent: oklch(0.55 0.18 295);
   --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.552 0.016 285.938);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.15 0.003 285.885);
+  --destructive: oklch(0.65 0.2 25);
+  --border: oklch(0.35 0.08 295 / 30%);
+  --input: oklch(0.35 0.08 295 / 20%);
+  --ring: oklch(0.65 0.2 295);
+  --chart-1: oklch(0.65 0.2 295);
+  --chart-2: oklch(0.55 0.15 280);
+  --chart-3: oklch(0.7 0.15 310);
+  --chart-4: oklch(0.6 0.18 260);
+  --chart-5: oklch(0.75 0.12 320);
+  --sidebar: oklch(0.1 0.025 290);
   --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary: oklch(0.65 0.2 295);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.22 0.004 286.033);
+  --sidebar-accent: oklch(0.18 0.03 290);
   --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.552 0.016 285.938);
+  --sidebar-border: oklch(0.35 0.08 295 / 30%);
+  --sidebar-ring: oklch(0.65 0.2 295);
 }
 
 @layer base {
@@ -130,18 +131,18 @@
 }
 
 .scrollbar-visible::-webkit-scrollbar-track {
-  background: #27272a;
+  background: #1a1625;
   border-radius: 6px;
 }
 
 .scrollbar-visible::-webkit-scrollbar-thumb {
-  background: #dc2626;
+  background: #8b5cf6;
   border-radius: 6px;
-  border: 2px solid #27272a;
+  border: 2px solid #1a1625;
 }
 
 .scrollbar-visible::-webkit-scrollbar-thumb:hover {
-  background: #ef4444;
+  background: #a78bfa;
 }
 
 /* Netflix-style skip animations */

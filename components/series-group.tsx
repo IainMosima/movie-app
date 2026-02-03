@@ -106,7 +106,7 @@ function SeasonSection({ season, episodes, onPlay }: SeasonSectionProps) {
             onClick={() => onPlay(episode)}
             className="w-full flex items-center gap-3 p-3 rounded-lg hover:bg-zinc-800/70 transition-colors text-left group"
           >
-            <div className="h-8 w-8 bg-zinc-800 group-hover:bg-red-600 rounded-md flex items-center justify-center shrink-0 transition-colors">
+            <div className="h-8 w-8 bg-zinc-800 group-hover:bg-purple-600 rounded-md flex items-center justify-center shrink-0 transition-colors">
               <Play className="h-3.5 w-3.5 fill-current" />
             </div>
             <div className="flex-1 min-w-0">

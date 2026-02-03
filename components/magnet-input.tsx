@@ -41,7 +41,7 @@ export function MagnetInput({ onSubmit, isLoading, className }: MagnetInputProps
         <Button
           type="submit"
           disabled={!isValid || isLoading}
-          className="bg-red-600 hover:bg-red-700 shrink-0"
+          className="bg-purple-600 hover:bg-purple-700 shrink-0"
         >
           {isLoading ? (
             <Loader2 className="h-4 w-4 animate-spin" />

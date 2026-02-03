@@ -67,7 +67,7 @@ function ResultCard({ result, onPlay }: ResultCardProps) {
         {/* Play button */}
         <Button
           size="icon"
-          className="h-12 w-12 rounded-lg bg-zinc-800 group-hover:bg-red-600 transition-colors shrink-0"
+          className="h-12 w-12 rounded-lg bg-zinc-800 group-hover:bg-purple-600 transition-colors shrink-0"
         >
           <Play className="h-5 w-5 fill-current" />
         </Button>
