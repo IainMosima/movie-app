@@ -5,6 +5,7 @@ import { Link2, Play, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { isValidTorrentInput } from "@/lib/torrent-utils";
 
 interface MagnetInputProps {
   onSubmit: (magnet: string) => void;
@@ -15,7 +16,7 @@ interface MagnetInputProps {
 export function MagnetInput({ onSubmit, isLoading, className }: MagnetInputProps) {
   const [magnet, setMagnet] = useState("");
 
-  const isValid = magnet.trim().startsWith("magnet:?");
+  const isValid = isValidTorrentInput(magnet);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -33,7 +34,7 @@ export function MagnetInput({ onSubmit, isLoading, className }: MagnetInputProps
             type="text"
             value={magnet}
             onChange={(e) => setMagnet(e.target.value)}
-            placeholder="Paste magnet link here..."
+            placeholder="Paste magnet link or .torrent URL..."
             className="pl-10 bg-zinc-900/50 border-zinc-800 focus-visible:ring-zinc-700"
             disabled={isLoading}
           />
@@ -55,7 +56,7 @@ export function MagnetInput({ onSubmit, isLoading, className }: MagnetInputProps
       </div>
       {magnet && !isValid && (
         <p className="text-xs text-red-400 mt-1.5 ml-1">
-          Must start with "magnet:?"
+          Must be a magnet link or .torrent URL
         </p>
       )}
     </form>

@@ -1,8 +1,8 @@
 {
   "downloadLimit": -1,
   "uploadLimit": -1,
-  "maxConnections": 55,
+  "maxConnections": 100,
   "cleanupDelaySeconds": 30,
-  "prebufferSeconds": 30,
+  "prebufferSeconds": 120,
   "bufferSizeMB": 300
 }

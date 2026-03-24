@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import WebTorrent from "webtorrent";
+import { extractInfoHash } from "@/lib/torrent-utils";
 
 // Shared client
 declare global {
@@ -21,13 +22,7 @@ export async function GET(request: NextRequest) {
   try {
     const client = getClient();
 
-    // Extract infoHash from magnet
-    const match = magnet.match(/urn:btih:([a-fA-F0-9]{40}|[a-zA-Z2-7]{32})/i);
-    const infoHash = match ? match[1].toLowerCase() : null;
-
-    if (!infoHash) {
-      return NextResponse.json({ error: "Invalid magnet" }, { status: 400 });
-    }
+    const infoHash = extractInfoHash(magnet);
 
     if (!client) {
       return NextResponse.json({
@@ -36,9 +31,11 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    const torrent = client.torrents.find(
-      (t) => t.infoHash && t.infoHash.toLowerCase() === infoHash
-    );
+    const torrent = infoHash
+      ? client.torrents.find(
+          (t) => t.infoHash && t.infoHash.toLowerCase() === infoHash
+        )
+      : client.torrents.find((t) => t.magnetURI === magnet) || null;
 
     if (!torrent) {
       return NextResponse.json({

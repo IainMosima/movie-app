@@ -3,6 +3,7 @@ import WebTorrent from "webtorrent";
 import { join } from "path";
 import { rmSync, existsSync, mkdirSync } from "fs";
 import { getSettings } from "./settings-store";
+import { extractInfoHash } from "./torrent-utils";
 import type { TorrentInfo, TorrentFileInfo } from "@/types";
 
 declare global {
@@ -39,20 +40,16 @@ class TorrentEngine {
     });
   }
 
-  // Extract infoHash from magnet URI
-  private extractInfoHash(magnet: string): string | null {
-    const match = magnet.match(/urn:btih:([a-fA-F0-9]{40}|[a-zA-Z2-7]{32})/i);
-    return match ? match[1].toLowerCase() : null;
-  }
-
-  // Add torrent from magnet, returns when metadata is ready
+  // Add torrent from magnet or .torrent URL, returns when metadata is ready
   async addTorrent(magnet: string): Promise<WebTorrent.Torrent> {
-    const infoHash = this.extractInfoHash(magnet);
+    const infoHash = extractInfoHash(magnet);
 
     // Check if torrent already exists
-    const existing = this.client.torrents.find(
-      (t) => t.infoHash === infoHash || t.magnetURI === magnet
-    );
+    const existing = infoHash
+      ? this.client.torrents.find(
+          (t) => t.infoHash === infoHash || t.magnetURI === magnet
+        )
+      : this.client.torrents.find((t) => t.magnetURI === magnet);
     if (existing) {
       // Wait for it to be ready if not already
       if (existing.ready) return existing;
@@ -62,8 +59,9 @@ class TorrentEngine {
     }
 
     // Check if we're already adding this torrent
-    if (infoHash && this.torrentPromises.has(infoHash)) {
-      return this.torrentPromises.get(infoHash)!;
+    const dedupKey = infoHash || magnet;
+    if (this.torrentPromises.has(dedupKey)) {
+      return this.torrentPromises.get(dedupKey)!;
     }
 
     const promise = new Promise<WebTorrent.Torrent>((resolve, reject) => {
@@ -90,12 +88,10 @@ class TorrentEngine {
       }, 60000);
     });
 
-    if (infoHash) {
-      this.torrentPromises.set(infoHash, promise);
-      promise.finally(() => {
-        this.torrentPromises.delete(infoHash);
-      });
-    }
+    this.torrentPromises.set(dedupKey, promise);
+    promise.finally(() => {
+      this.torrentPromises.delete(dedupKey);
+    });
 
     return promise;
   }

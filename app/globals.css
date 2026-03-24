@@ -173,6 +173,27 @@
   animation: fade-in 0.2s ease-out;
 }
 
+/* Netflix-style subtitle cues */
+video::cue {
+  background: transparent;
+  color: white;
+  font-weight: 600;
+  font-size: 1.4rem;
+  line-height: 1.4;
+  text-shadow:
+    0 0 4px rgba(0, 0, 0, 0.9),
+    0 0 8px rgba(0, 0, 0, 0.7),
+    1px 1px 3px rgba(0, 0, 0, 0.8),
+    -1px -1px 3px rgba(0, 0, 0, 0.8),
+    0 2px 6px rgba(0, 0, 0, 0.6);
+}
+
+@media (min-width: 1920px) {
+  video::cue {
+    font-size: 2.8rem;
+  }
+}
+
 /* Ensure cursor is visible on TV browsers */
 @media (hover: none), (pointer: coarse) {
   .tv-show-cursor,

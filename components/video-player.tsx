@@ -10,6 +10,7 @@ import {
   Minimize,
   PictureInPicture2,
   Loader2,
+  Subtitles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -26,6 +27,7 @@ interface VideoPlayerProps {
   title?: string;
   onClose?: () => void;
   autoPlay?: boolean;
+  subtitles?: { label: string; src: string }[];
 }
 
 const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
@@ -35,6 +37,7 @@ export function VideoPlayer({
   title,
   onClose,
   autoPlay = true,
+  subtitles = [],
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -51,8 +54,10 @@ export function VideoPlayer({
   const [buffered, setBuffered] = useState(0);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [isPiP, setIsPiP] = useState(false);
+  const [activeSubtitleIndex, setActiveSubtitleIndex] = useState<number | null>(null);
   const [skipIndicator, setSkipIndicator] = useState<{ side: "left" | "right"; show: boolean; seconds: number }>({ side: "left", show: false, seconds: 10 });
   const lastTapRef = useRef<{ time: number; side: "left" | "right" | null }>({ time: 0, side: null });
+  const lastActionTimeRef = useRef(0);
   const [prefersAlwaysOnControls, setPrefersAlwaysOnControls] = useState(false);
 
   // Show controls on mouse move
@@ -197,6 +202,37 @@ export function VideoPlayer({
     };
   }, []);
 
+  // Sync text track modes when subtitles change or active track changes
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    for (let i = 0; i < video.textTracks.length; i++) {
+      video.textTracks[i].mode = i === activeSubtitleIndex ? "showing" : "hidden";
+    }
+  }, [subtitles, activeSubtitleIndex]);
+
+  const setActiveSubtitle = useCallback((index: number | null) => {
+    setActiveSubtitleIndex(index);
+    const video = videoRef.current;
+    if (!video) return;
+    for (let i = 0; i < video.textTracks.length; i++) {
+      video.textTracks[i].mode = i === index ? "showing" : "hidden";
+    }
+  }, []);
+
+  const cycleSubtitles = useCallback(() => {
+    setActiveSubtitleIndex((prev) => {
+      const next = prev === null ? 0 : prev + 1 >= subtitles.length ? null : prev + 1;
+      const video = videoRef.current;
+      if (video) {
+        for (let i = 0; i < video.textTracks.length; i++) {
+          video.textTracks[i].mode = i === next ? "showing" : "hidden";
+        }
+      }
+      return next;
+    });
+  }, [subtitles.length]);
+
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     // Ignore if typing in input
     if (
@@ -329,6 +365,10 @@ export function VideoPlayer({
         e.preventDefault();
         skip(10);
         break;
+      case "c":
+        e.preventDefault();
+        cycleSubtitles();
+        break;
       case "p":
         e.preventDefault();
         togglePiP();
@@ -348,7 +388,7 @@ export function VideoPlayer({
         skip(10);
         break;
     }
-  }, [isFullscreen, onClose]);
+  }, [isFullscreen, onClose, cycleSubtitles]);
 
   const seekTo = (time: number) => {
     const video = videoRef.current;
@@ -398,13 +438,22 @@ export function VideoPlayer({
   };
 
   // TV pointer helper - handles all possible click events from TV remotes
-  const handleTVClick = (action: () => void) => ({
-    onClick: (e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); action(); },
-    onMouseDown: (e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); },
-    onMouseUp: (e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); action(); },
-    onTouchEnd: (e: React.TouchEvent) => { e.preventDefault(); e.stopPropagation(); action(); },
-    onKeyDown: handleTVKeyDown(action),
-  });
+  // Uses a time guard to prevent double-firing (e.g. D-pad OK fires both keydown + synthesized click)
+  const handleTVClick = (action: () => void) => {
+    const guardedAction = () => {
+      const now = Date.now();
+      if (now - lastActionTimeRef.current < 300) return;
+      lastActionTimeRef.current = now;
+      action();
+    };
+    return {
+      onClick: (e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); guardedAction(); },
+      onMouseDown: (e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); },
+      onMouseUp: (e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); guardedAction(); },
+      onTouchEnd: (e: React.TouchEvent) => { e.preventDefault(); e.stopPropagation(); guardedAction(); },
+      onKeyDown: handleTVKeyDown(guardedAction),
+    };
+  };
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -644,7 +693,8 @@ export function VideoPlayer({
       ref={containerRef}
       className={cn(
         "relative w-full h-full bg-black group",
-        prefersAlwaysOnControls && "touch-manipulation tv-show-cursor"
+        prefersAlwaysOnControls && "touch-manipulation tv-show-cursor",
+        !showControls && isPlaying && "cursor-none"
       )}
       tabIndex={0}
       role="application"
@@ -677,7 +727,16 @@ export function VideoPlayer({
           setShowControls(true);
           containerRef.current?.focus();
         }}
-      />
+      >
+        {subtitles.map((sub, i) => (
+          <track
+            key={sub.src}
+            kind="subtitles"
+            label={sub.label}
+            src={sub.src}
+          />
+        ))}
+      </video>
 
       {/* Skip indicator (double-tap feedback) - Netflix style */}
       {skipIndicator.show && (
@@ -910,6 +969,63 @@ export function VideoPlayer({
             )}>
               {formatDuration(currentTime)} / {formatDuration(duration)}
             </span>
+
+            {/* Subtitle picker - show when subtitles available */}
+            {subtitles.length > 0 && prefersAlwaysOnControls && (
+              <button
+                type="button"
+                {...handleTVClick(cycleSubtitles)}
+                className={cn(
+                  "flex items-center justify-center rounded-full cursor-pointer",
+                  "hover:bg-white/10 active:bg-white/30",
+                  "focus:bg-white/20 focus:ring-2 focus:ring-white focus:outline-none",
+                  "h-14 w-14",
+                  activeSubtitleIndex !== null ? "text-purple-400" : "text-white"
+                )}
+              >
+                <Subtitles className="h-7 w-7" />
+              </button>
+            )}
+            {subtitles.length > 0 && !prefersAlwaysOnControls && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    className={cn(
+                      "flex items-center justify-center rounded-full cursor-pointer h-10 w-10",
+                      "hover:bg-white/10 active:bg-white/30",
+                      "focus:bg-white/20 focus:ring-2 focus:ring-white focus:outline-none",
+                      activeSubtitleIndex !== null ? "text-purple-400" : "text-white"
+                    )}
+                  >
+                    <Subtitles className="h-5 w-5" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="bg-zinc-900/95 border-zinc-800 backdrop-blur-sm">
+                  <DropdownMenuItem
+                    onClick={() => setActiveSubtitle(null)}
+                    className={cn(
+                      "cursor-pointer",
+                      activeSubtitleIndex === null && "bg-white/10"
+                    )}
+                  >
+                    Off
+                  </DropdownMenuItem>
+                  {subtitles.map((sub, i) => (
+                    <DropdownMenuItem
+                      key={sub.src}
+                      onClick={() => setActiveSubtitle(i)}
+                      className={cn(
+                        "cursor-pointer",
+                        i === activeSubtitleIndex && "bg-white/10"
+                      )}
+                    >
+                      {sub.label}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
 
             {/* Spacer - only on desktop */}
             {!prefersAlwaysOnControls && <div className="flex-1" />}

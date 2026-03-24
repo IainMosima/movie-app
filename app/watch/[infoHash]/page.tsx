@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useCallback, use } from "react";
+import { useEffect, useRef, useCallback, useState, use } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { VideoPlayer } from "@/components/video-player";
 
@@ -16,6 +16,7 @@ export default function WatchPage({ params }: WatchPageProps) {
   const fileIndex = searchParams.get("file");
   const sessionIdRef = useRef<string | null>(null);
   const hasStartedRef = useRef(false);
+  const [subtitles, setSubtitles] = useState<{ label: string; src: string }[]>([]);
 
   // Get or create session
   useEffect(() => {
@@ -90,6 +91,39 @@ export default function WatchPage({ params }: WatchPageProps) {
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [infoHash]);
 
+  // Fetch subtitle tracks
+  useEffect(() => {
+    const fetchSubtitles = async () => {
+      try {
+        const res = await fetch(`/api/subtitle/${infoHash}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.subtitles?.length > 0) {
+          setSubtitles(
+            data.subtitles.map(
+              (s: { name: string; index?: number; streamIndex?: number; type?: string }) =>
+                s.type === "embedded"
+                  ? {
+                      label: s.name,
+                      src: `/api/subtitle/${infoHash}?embedded=${s.streamIndex}`,
+                    }
+                  : {
+                      label: s.name.replace(/\.[^.]+$/, ""),
+                      src: `/api/subtitle/${infoHash}?file=${s.index}`,
+                    }
+            )
+          );
+        }
+      } catch (err) {
+        console.error("Failed to fetch subtitles:", err);
+      }
+    };
+
+    // Small delay to let torrent connect and discover files
+    const timer = setTimeout(fetchSubtitles, 2000);
+    return () => clearTimeout(timer);
+  }, [infoHash]);
+
   const handleClose = useCallback(() => {
     // Go back to home - localStorage will handle reopening the episode picker
     router.push("/");
@@ -108,6 +142,7 @@ export default function WatchPage({ params }: WatchPageProps) {
         title={title}
         onClose={handleClose}
         autoPlay
+        subtitles={subtitles}
       />
     </div>
   );

@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import WebTorrent from "webtorrent";
+import { isValidTorrentInput, extractInfoHash } from "@/lib/torrent-utils";
 
 const GetFilesSchema = z.object({
-  magnet: z.string().startsWith("magnet:", "Invalid magnet link"),
+  magnet: z.string().refine(isValidTorrentInput, "Invalid magnet link or .torrent URL"),
 });
 
 export interface TorrentFile {
@@ -63,16 +64,13 @@ export async function POST(request: NextRequest) {
     const client = getClient();
 
     // Check if torrent already exists
-    const infoHashMatch = magnet.match(
-      /urn:btih:([a-fA-F0-9]{40}|[a-zA-Z2-7]{32})/i
-    );
-    const infoHash = infoHashMatch ? infoHashMatch[1].toLowerCase() : null;
+    const infoHash = extractInfoHash(magnet);
 
     let existingTorrent = infoHash
       ? client.torrents.find(
-          (t) => t.infoHash && t.infoHash.toLowerCase() === infoHash.toLowerCase()
+          (t) => t.infoHash && t.infoHash.toLowerCase() === infoHash
         )
-      : null;
+      : client.torrents.find((t) => t.magnetURI === magnet) || null;
 
     if (existingTorrent && existingTorrent.ready) {
       // Already have it, return immediately

@@ -14,6 +14,7 @@ import {
   Loader2,
   BookmarkPlus,
 } from "lucide-react";
+import { isValidTorrentInput, extractTitleFromInput } from "@/lib/torrent-utils";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -87,12 +88,9 @@ function HomePageContent() {
     title?: string,
     options: { forcePicker?: boolean } = {}
   ) => {
-    // Extract name from magnet if not provided
+    // Extract name from magnet/URL if not provided
     if (!title) {
-      const dnMatch = magnet.match(/dn=([^&]+)/);
-      title = dnMatch
-        ? decodeURIComponent(dnMatch[1].replace(/\+/g, " "))
-        : "Unknown";
+      title = extractTitleFromInput(magnet);
     }
 
     setIsLoadingPlay(true);
@@ -257,7 +255,7 @@ function HomePageContent() {
                     <Input
                       value={newMagnet}
                       onChange={(e) => setNewMagnet(e.target.value)}
-                      placeholder="magnet:?xt=urn:btih:..."
+                      placeholder="magnet:?xt=urn:btih:... or https://...torrent"
                       className="bg-zinc-800 border-zinc-700 font-mono text-xs"
                     />
                   </div>
@@ -267,7 +265,7 @@ function HomePageContent() {
                     onClick={handleAddToLibrary}
                     disabled={
                       !newName.trim() ||
-                      !newMagnet.startsWith("magnet:") ||
+                      !isValidTorrentInput(newMagnet) ||
                       isAdding
                     }
                   >

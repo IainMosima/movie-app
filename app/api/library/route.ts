@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getAllItems, addItem } from "@/lib/library-store";
+import { isValidTorrentInput } from "@/lib/torrent-utils";
 
 const AddItemSchema = z.object({
   name: z.string().min(1, "Name is required"),
-  magnet: z.string().startsWith("magnet:", "Invalid magnet link"),
+  magnet: z.string().refine(isValidTorrentInput, "Invalid magnet link or .torrent URL"),
   quality: z.string().optional(),
   size: z.string().optional(),
 });

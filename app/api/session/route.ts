@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import WebTorrent from "webtorrent";
+import { isValidTorrentInput, extractInfoHash } from "@/lib/torrent-utils";
 
 const StartSessionSchema = z.object({
-  magnet: z.string().startsWith("magnet:", "Invalid magnet link"),
+  magnet: z.string().refine(isValidTorrentInput, "Invalid magnet link or .torrent URL"),
 });
 
 // Shared client
@@ -28,18 +29,14 @@ export async function POST(request: NextRequest) {
 
     const client = getClient();
 
-    // Extract infoHash
-    const match = magnet.match(/urn:btih:([a-fA-F0-9]{40}|[a-zA-Z2-7]{32})/i);
-    const infoHash = match ? match[1].toLowerCase() : null;
-
-    if (!infoHash) {
-      return NextResponse.json({ error: "Invalid magnet" }, { status: 400 });
-    }
+    const infoHash = extractInfoHash(magnet);
 
     // Check if already loaded
-    const existing = client.torrents.find(
-      (t) => t.infoHash && t.infoHash.toLowerCase() === infoHash
-    );
+    const existing = infoHash
+      ? client.torrents.find(
+          (t) => t.infoHash && t.infoHash.toLowerCase() === infoHash
+        )
+      : client.torrents.find((t) => t.magnetURI === magnet) || null;
 
     if (existing && existing.ready) {
       return NextResponse.json({
@@ -51,7 +48,7 @@ export async function POST(request: NextRequest) {
 
     // Not loaded yet - that's fine, stream will handle it
     return NextResponse.json({
-      infoHash,
+      infoHash: infoHash || (existing?.infoHash ?? null),
       ready: !!existing,
     });
   } catch (error) {
