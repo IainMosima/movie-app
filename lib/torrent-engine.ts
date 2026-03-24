@@ -65,27 +65,54 @@ class TorrentEngine {
     }
 
     const promise = new Promise<WebTorrent.Torrent>((resolve, reject) => {
-      const torrent = this.client.add(magnet, {
-        path: CACHE_PATH,
-      });
-
-      torrent.on("ready", () => {
-        console.log(`Torrent ready: ${torrent.name} (${torrent.infoHash})`);
-        resolve(torrent);
-      });
-
-      torrent.on("error", (err) => {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`Torrent error: ${message}`);
-        reject(err);
-      });
-
-      // Timeout after 60 seconds
-      setTimeout(() => {
-        if (!torrent.ready) {
-          reject(new Error("Torrent metadata timeout"));
-        }
+      const timeout = setTimeout(() => {
+        reject(new Error("Torrent metadata timeout"));
       }, 60000);
+
+      try {
+        const torrent = this.client.add(magnet, {
+          path: CACHE_PATH,
+        });
+
+        torrent.on("ready", () => {
+          clearTimeout(timeout);
+          console.log(`Torrent ready: ${torrent.name} (${torrent.infoHash})`);
+          resolve(torrent);
+        });
+
+        torrent.on("error", (err) => {
+          clearTimeout(timeout);
+          const message = err instanceof Error ? err.message : String(err);
+          if (message.includes("duplicate torrent")) {
+            const hashMatch = message.match(/([a-f0-9]{40})/i);
+            const dup = hashMatch
+              ? this.client.torrents.find((t) => t.infoHash === hashMatch[1])
+              : null;
+            if (dup) {
+              if (dup.ready) resolve(dup);
+              else dup.once("ready", () => { clearTimeout(timeout); resolve(dup); });
+              return;
+            }
+          }
+          console.error(`Torrent error: ${message}`);
+          reject(err);
+        });
+      } catch (err) {
+        clearTimeout(timeout);
+        const message = err instanceof Error ? err.message : String(err);
+        if (message.includes("duplicate torrent")) {
+          const hashMatch = message.match(/([a-f0-9]{40})/i);
+          const dup = hashMatch
+            ? this.client.torrents.find((t) => t.infoHash === hashMatch[1])
+            : null;
+          if (dup) {
+            if (dup.ready) resolve(dup);
+            else dup.once("ready", () => { clearTimeout(timeout); resolve(dup); });
+            return;
+          }
+        }
+        reject(err);
+      }
     });
 
     this.torrentPromises.set(dedupKey, promise);

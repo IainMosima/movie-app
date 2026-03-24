@@ -63,17 +63,24 @@ export async function POST(request: NextRequest) {
 
     const client = getClient();
 
-    // Check if torrent already exists
+    // Check if torrent already exists (by infoHash for magnets, by magnetURI for URLs)
     const infoHash = extractInfoHash(magnet);
 
-    let existingTorrent = infoHash
-      ? client.torrents.find(
+    const findExisting = () => {
+      // First try by infoHash (works for magnets)
+      if (infoHash) {
+        return client.torrents.find(
           (t) => t.infoHash && t.infoHash.toLowerCase() === infoHash
-        )
-      : client.torrents.find((t) => t.magnetURI === magnet) || null;
+        ) || null;
+      }
+      // For .torrent URLs, try matching by magnetURI (may not match after resolve)
+      // Also search all torrents since WebTorrent may have already resolved it
+      return client.torrents.find((t) => t.magnetURI === magnet) || null;
+    };
+
+    let existingTorrent = findExisting();
 
     if (existingTorrent && existingTorrent.ready) {
-      // Already have it, return immediately
       return NextResponse.json(buildResponse(existingTorrent));
     }
 
@@ -92,20 +99,56 @@ export async function POST(request: NextRequest) {
         return;
       }
 
-      const t = client.add(magnet, {
-        path: "/tmp/streambox-cache",
-      });
+      try {
+        const t = client.add(magnet, {
+          path: "/tmp/streambox-cache",
+        });
 
-      t.once("ready", () => {
-        clearTimeout(timeout);
-        console.log(`Torrent ready: ${t.name} (${t.numPeers} peers)`);
-        resolve(t);
-      });
+        t.once("ready", () => {
+          clearTimeout(timeout);
+          console.log(`Torrent ready: ${t.name} (${t.numPeers} peers)`);
+          resolve(t);
+        });
 
-      t.once("error", (err) => {
+        t.once("error", (err) => {
+          clearTimeout(timeout);
+          // If duplicate error, the torrent is already loaded — find and return it
+          const msg = err instanceof Error ? err.message : String(err);
+          if (msg.includes("duplicate torrent")) {
+            const found = client.torrents.find(
+              (t) => t.ready
+            );
+            if (found) {
+              resolve(found);
+              return;
+            }
+          }
+          reject(err);
+        });
+      } catch (err) {
         clearTimeout(timeout);
+        // Sync duplicate error from client.add()
+        const msg = err instanceof Error ? (err as Error).message : String(err);
+        if (msg.includes("duplicate torrent")) {
+          const hashMatch = msg.match(/([a-f0-9]{40})/i);
+          if (hashMatch) {
+            const dup = client.torrents.find(
+              (t) => t.infoHash === hashMatch[1]
+            );
+            if (dup && dup.ready) {
+              resolve(dup);
+              return;
+            } else if (dup) {
+              dup.once("ready", () => {
+                clearTimeout(timeout);
+                resolve(dup);
+              });
+              return;
+            }
+          }
+        }
         reject(err);
-      });
+      }
     });
 
     return NextResponse.json(buildResponse(torrent));
