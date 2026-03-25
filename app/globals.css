@@ -173,9 +173,8 @@
   animation: fade-in 0.2s ease-out;
 }
 
-/* Netflix-style subtitle cues */
-video::cue {
-  background: transparent;
+/* JS-rendered subtitle overlay */
+.subtitle-overlay {
   color: white;
   font-weight: 600;
   font-size: 1.4rem;
@@ -189,7 +188,7 @@ video::cue {
 }
 
 @media (min-width: 1920px) {
-  video::cue {
+  .subtitle-overlay {
     font-size: 2.8rem;
   }
 }

@@ -255,7 +255,7 @@ function HomePageContent() {
                     <Input
                       value={newMagnet}
                       onChange={(e) => setNewMagnet(e.target.value)}
-                      placeholder="magnet:?xt=urn:btih:... or https://...torrent"
+                      placeholder="Input URL..."
                       className="bg-zinc-800 border-zinc-700 font-mono text-xs"
                     />
                   </div>

@@ -55,6 +55,8 @@ export function VideoPlayer({
   const [playbackRate, setPlaybackRate] = useState(1);
   const [isPiP, setIsPiP] = useState(false);
   const [activeSubtitleIndex, setActiveSubtitleIndex] = useState<number | null>(null);
+  const [activeCueText, setActiveCueText] = useState<string | null>(null);
+  const parsedCuesRef = useRef<Map<number, { start: number; end: number; text: string }[]>>(new Map());
   const [skipIndicator, setSkipIndicator] = useState<{ side: "left" | "right"; show: boolean; seconds: number }>({ side: "left", show: false, seconds: 10 });
   const lastTapRef = useRef<{ time: number; side: "left" | "right" | null }>({ time: 0, side: null });
   const lastActionTimeRef = useRef(0);
@@ -202,33 +204,86 @@ export function VideoPlayer({
     };
   }, []);
 
-  // Sync text track modes when subtitles change or active track changes
+  // Parse VTT content into cue objects
+  const parseVTT = useCallback((vttText: string): { start: number; end: number; text: string }[] => {
+    const cues: { start: number; end: number; text: string }[] = [];
+    const blocks = vttText.replace(/\r\n/g, "\n").split("\n\n");
+
+    const parseTime = (ts: string): number => {
+      const parts = ts.trim().split(":");
+      if (parts.length === 3) {
+        const [h, m, rest] = parts;
+        const [s, ms] = rest.split(".");
+        return parseInt(h) * 3600 + parseInt(m) * 60 + parseInt(s) + parseInt(ms || "0") / 1000;
+      } else if (parts.length === 2) {
+        const [m, rest] = parts;
+        const [s, ms] = rest.split(".");
+        return parseInt(m) * 60 + parseInt(s) + parseInt(ms || "0") / 1000;
+      }
+      return 0;
+    };
+
+    for (const block of blocks) {
+      const lines = block.trim().split("\n");
+      for (let i = 0; i < lines.length; i++) {
+        const match = lines[i].match(/(\d{1,2}:[\d:.]+)\s*-->\s*(\d{1,2}:[\d:.]+)/);
+        if (match) {
+          const start = parseTime(match[1]);
+          const end = parseTime(match[2]);
+          const text = lines.slice(i + 1).join("\n").replace(/<[^>]+>/g, "").trim();
+          if (text) cues.push({ start, end, text });
+          break;
+        }
+      }
+    }
+    return cues;
+  }, []);
+
+  // Fetch and parse subtitle files when subtitles prop changes
+  useEffect(() => {
+    if (subtitles.length === 0) return;
+    parsedCuesRef.current.clear();
+
+    subtitles.forEach((sub, i) => {
+      fetch(sub.src)
+        .then((res) => res.text())
+        .then((text) => {
+          parsedCuesRef.current.set(i, parseVTT(text));
+        })
+        .catch((err) => console.error(`Failed to load subtitle ${sub.label}:`, err));
+    });
+  }, [subtitles, parseVTT]);
+
+  // Update active cue text based on video time
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-    for (let i = 0; i < video.textTracks.length; i++) {
-      video.textTracks[i].mode = i === activeSubtitleIndex ? "showing" : "hidden";
-    }
-  }, [subtitles, activeSubtitleIndex]);
+
+    const updateCue = () => {
+      if (activeSubtitleIndex === null) {
+        setActiveCueText(null);
+        return;
+      }
+      const cues = parsedCuesRef.current.get(activeSubtitleIndex);
+      if (!cues) { setActiveCueText(null); return; }
+      const t = video.currentTime;
+      const active = cues.find((c) => t >= c.start && t <= c.end);
+      setActiveCueText(active ? active.text : null);
+    };
+
+    video.addEventListener("timeupdate", updateCue);
+    return () => video.removeEventListener("timeupdate", updateCue);
+  }, [activeSubtitleIndex]);
 
   const setActiveSubtitle = useCallback((index: number | null) => {
     setActiveSubtitleIndex(index);
-    const video = videoRef.current;
-    if (!video) return;
-    for (let i = 0; i < video.textTracks.length; i++) {
-      video.textTracks[i].mode = i === index ? "showing" : "hidden";
-    }
+    if (index === null) setActiveCueText(null);
   }, []);
 
   const cycleSubtitles = useCallback(() => {
     setActiveSubtitleIndex((prev) => {
       const next = prev === null ? 0 : prev + 1 >= subtitles.length ? null : prev + 1;
-      const video = videoRef.current;
-      if (video) {
-        for (let i = 0; i < video.textTracks.length; i++) {
-          video.textTracks[i].mode = i === next ? "showing" : "hidden";
-        }
-      }
+      if (next === null) setActiveCueText(null);
       return next;
     });
   }, [subtitles.length]);
@@ -727,16 +782,16 @@ export function VideoPlayer({
           setShowControls(true);
           containerRef.current?.focus();
         }}
-      >
-        {subtitles.map((sub, i) => (
-          <track
-            key={sub.src}
-            kind="subtitles"
-            label={sub.label}
-            src={sub.src}
-          />
-        ))}
-      </video>
+      />
+
+      {/* JS-rendered subtitles — works on all TV browsers unlike <track> elements */}
+      {activeCueText && (
+        <div className="absolute bottom-[12%] left-0 right-0 flex justify-center pointer-events-none px-8 z-10">
+          <p className="subtitle-overlay text-center whitespace-pre-line max-w-[80%]">
+            {activeCueText}
+          </p>
+        </div>
+      )}
 
       {/* Skip indicator (double-tap feedback) - Netflix style */}
       {skipIndicator.show && (

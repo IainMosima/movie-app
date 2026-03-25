@@ -105,6 +105,7 @@ export async function GET(
           "Content-Type": contentType,
           "Content-Length": fileSize.toString(),
           "Accept-Ranges": "bytes",
+          "Access-Control-Allow-Origin": "*",
         },
       });
     }
@@ -129,6 +130,7 @@ export async function GET(
         "Content-Range": `bytes ${start}-${end}/${fileSize}`,
         "Content-Length": chunkSize.toString(),
         "Accept-Ranges": "bytes",
+        "Access-Control-Allow-Origin": "*",
       },
     });
   } catch (error) {
@@ -138,4 +140,15 @@ export async function GET(
       { status: 500 }
     );
   }
+}
+
+// OPTIONS preflight for TV browsers that send CORS preflight with Range header
+export async function OPTIONS() {
+  return new NextResponse(null, {
+    headers: {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, OPTIONS",
+      "Access-Control-Allow-Headers": "Range",
+    },
+  });
 }
