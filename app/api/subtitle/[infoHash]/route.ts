@@ -1,15 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import WebTorrent from "webtorrent";
 import { join } from "path";
 import {
   isFFmpegAvailable,
   probeEmbeddedSubtitles,
   extractSubtitleTrack,
 } from "@/lib/subtitle-extractor";
-
-declare global {
-  var __webTorrentClient: WebTorrent.Instance | undefined;
-}
+import { getTorrentEngine } from "@/lib/torrent-engine";
+import type WebTorrent from "webtorrent";
 
 const CACHE_PATH = join(process.cwd(), "data", "cache");
 
@@ -41,17 +38,8 @@ export async function GET(
   const embeddedParam = searchParams.get("embedded");
 
   try {
-    const client = globalThis.__webTorrentClient;
-    if (!client) {
-      return NextResponse.json(
-        { error: "WebTorrent client not initialized" },
-        { status: 503 }
-      );
-    }
-
-    const torrent = client.torrents.find(
-      (t) => t.infoHash && t.infoHash.toLowerCase() === infoHash.toLowerCase()
-    );
+    const engine = getTorrentEngine();
+    const torrent = engine.getTorrent(infoHash);
 
     if (!torrent) {
       return NextResponse.json(

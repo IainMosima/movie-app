@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import WebTorrent from "webtorrent";
-import { isValidTorrentInput, extractInfoHash } from "@/lib/torrent-utils";
+import { isValidTorrentInput } from "@/lib/torrent-utils";
+import { getTorrentEngine } from "@/lib/torrent-engine";
+import type WebTorrent from "webtorrent";
 
 const GetFilesSchema = z.object({
   magnet: z.string().refine(isValidTorrentInput, "Invalid magnet link or .torrent URL"),
@@ -41,115 +42,14 @@ function getExtension(name: string): string {
   return match ? match[1].toLowerCase() : "";
 }
 
-// Store client globally to reuse connections
-declare global {
-  var __webTorrentClient: WebTorrent.Instance | undefined;
-}
-
-function getClient(): WebTorrent.Instance {
-  if (!globalThis.__webTorrentClient) {
-    globalThis.__webTorrentClient = new WebTorrent({
-      maxConns: 100,
-    });
-  }
-  return globalThis.__webTorrentClient;
-}
-
-// POST /api/torrent/files - Get file list from magnet (fast, like CLI)
+// POST /api/torrent/files - Get file list from magnet or .torrent URL
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { magnet } = GetFilesSchema.parse(body);
 
-    const client = getClient();
-
-    // Check if torrent already exists (by infoHash for magnets, by magnetURI for URLs)
-    const infoHash = extractInfoHash(magnet);
-
-    const findExisting = () => {
-      // First try by infoHash (works for magnets)
-      if (infoHash) {
-        return client.torrents.find(
-          (t) => t.infoHash && t.infoHash.toLowerCase() === infoHash
-        ) || null;
-      }
-      // For .torrent URLs, try matching by magnetURI (may not match after resolve)
-      // Also search all torrents since WebTorrent may have already resolved it
-      return client.torrents.find((t) => t.magnetURI === magnet) || null;
-    };
-
-    let existingTorrent = findExisting();
-
-    if (existingTorrent && existingTorrent.ready) {
-      return NextResponse.json(buildResponse(existingTorrent));
-    }
-
-    // Add torrent and wait for metadata
-    const torrent = await new Promise<WebTorrent.Torrent>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        reject(new Error("Timeout: Could not fetch metadata in 60 seconds"));
-      }, 60000);
-
-      // If already being added, wait for it
-      if (existingTorrent) {
-        existingTorrent.once("ready", () => {
-          clearTimeout(timeout);
-          resolve(existingTorrent!);
-        });
-        return;
-      }
-
-      try {
-        const t = client.add(magnet, {
-          path: "/tmp/streambox-cache",
-        });
-
-        t.once("ready", () => {
-          clearTimeout(timeout);
-          console.log(`Torrent ready: ${t.name} (${t.numPeers} peers)`);
-          resolve(t);
-        });
-
-        t.once("error", (err) => {
-          clearTimeout(timeout);
-          // If duplicate error, the torrent is already loaded — find and return it
-          const msg = err instanceof Error ? err.message : String(err);
-          if (msg.includes("duplicate torrent")) {
-            const found = client.torrents.find(
-              (t) => t.ready
-            );
-            if (found) {
-              resolve(found);
-              return;
-            }
-          }
-          reject(err);
-        });
-      } catch (err) {
-        clearTimeout(timeout);
-        // Sync duplicate error from client.add()
-        const msg = err instanceof Error ? (err as Error).message : String(err);
-        if (msg.includes("duplicate torrent")) {
-          const hashMatch = msg.match(/([a-f0-9]{40})/i);
-          if (hashMatch) {
-            const dup = client.torrents.find(
-              (t) => t.infoHash === hashMatch[1]
-            );
-            if (dup && dup.ready) {
-              resolve(dup);
-              return;
-            } else if (dup) {
-              dup.once("ready", () => {
-                clearTimeout(timeout);
-                resolve(dup);
-              });
-              return;
-            }
-          }
-        }
-        reject(err);
-      }
-    });
+    const engine = getTorrentEngine();
+    const torrent = await engine.addTorrent(magnet);
 
     return NextResponse.json(buildResponse(torrent));
   } catch (error) {

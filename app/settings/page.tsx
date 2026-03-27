@@ -149,19 +149,19 @@ export default function SettingsPage() {
             <div className="space-y-4">
               <div>
                 <label className="text-sm text-zinc-400 mb-2 block">
-                  Cleanup Delay (seconds)
+                  Cleanup Delay (minutes)
                 </label>
                 <Input
                   type="number"
-                  value={cleanupDelay}
-                  onChange={(e) => setCleanupDelay(Number(e.target.value))}
+                  value={Math.round(cleanupDelay / 60)}
+                  onChange={(e) => setCleanupDelay(Number(e.target.value) * 60)}
                   min={0}
-                  max={3600}
+                  max={60}
                   className="bg-zinc-800 border-zinc-700 w-32"
                 />
                 <p className="text-xs text-zinc-600 mt-1">
                   How long to wait after the last viewer disconnects before
-                  deleting torrent cache (0-3600 seconds)
+                  deleting torrent cache (0-60 minutes)
                 </p>
               </div>
             </div>

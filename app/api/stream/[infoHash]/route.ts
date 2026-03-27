@@ -1,20 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import WebTorrent from "webtorrent";
-import { getSettings } from "@/lib/settings-store";
-
-// Shared client with files route
-declare global {
-  var __webTorrentClient: WebTorrent.Instance | undefined;
-}
-
-function getClient(): WebTorrent.Instance {
-  if (!globalThis.__webTorrentClient) {
-    globalThis.__webTorrentClient = new WebTorrent({
-      maxConns: 100,
-    });
-  }
-  return globalThis.__webTorrentClient;
-}
+import { getTorrentEngine } from "@/lib/torrent-engine";
 
 function parseRange(
   rangeHeader: string,
@@ -41,10 +26,8 @@ export async function GET(
   const fileIndexParam = searchParams.get("file");
 
   try {
-    const client = getClient();
-    const torrent = client.torrents.find(
-      (t) => t.infoHash && t.infoHash.toLowerCase() === infoHash.toLowerCase()
-    );
+    const engine = getTorrentEngine();
+    const torrent = engine.getTorrent(infoHash);
 
     if (!torrent) {
       return NextResponse.json(
@@ -54,7 +37,7 @@ export async function GET(
     }
 
     // Get the file to stream
-    let file: WebTorrent.TorrentFile | undefined;
+    let file: typeof torrent.files[number] | undefined;
 
     if (fileIndexParam !== null) {
       const idx = parseInt(fileIndexParam, 10);
@@ -78,8 +61,6 @@ export async function GET(
       );
     }
 
-    // Get buffer settings for logging
-    const settings = getSettings();
     const fileSize = file.length;
     const rangeHeader = request.headers.get("range");
 

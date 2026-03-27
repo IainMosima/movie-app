@@ -1,15 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import WebTorrent from "webtorrent";
 import { extractInfoHash } from "@/lib/torrent-utils";
-
-// Shared client
-declare global {
-  var __webTorrentClient: WebTorrent.Instance | undefined;
-}
-
-function getClient(): WebTorrent.Instance | null {
-  return globalThis.__webTorrentClient || null;
-}
+import { getTorrentEngine } from "@/lib/torrent-engine";
 
 // GET /api/torrent/status?magnet=... - Check torrent connection status
 export async function GET(request: NextRequest) {
@@ -20,22 +11,12 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const client = getClient();
-
+    const engine = getTorrentEngine();
     const infoHash = extractInfoHash(magnet);
 
-    if (!client) {
-      return NextResponse.json({
-        status: "not_found",
-        message: "Torrent not started yet",
-      });
-    }
-
     const torrent = infoHash
-      ? client.torrents.find(
-          (t) => t.infoHash && t.infoHash.toLowerCase() === infoHash
-        )
-      : client.torrents.find((t) => t.magnetURI === magnet) || null;
+      ? engine.getTorrent(infoHash)
+      : engine.findTorrentByMagnetURI(magnet);
 
     if (!torrent) {
       return NextResponse.json({

@@ -1,7 +1,7 @@
 import "server-only";
 import WebTorrent from "webtorrent";
 import { join } from "path";
-import { rmSync, existsSync, mkdirSync } from "fs";
+import { rmSync, existsSync, mkdirSync, readdirSync } from "fs";
 import { getSettings } from "./settings-store";
 import { extractInfoHash } from "./torrent-utils";
 import type { TorrentInfo, TorrentFileInfo } from "@/types";
@@ -23,6 +23,7 @@ class TorrentEngine {
   private sessions: Map<string, Set<string>>; // infoHash -> sessionIds
   private cleanupTimers: Map<string, NodeJS.Timeout>;
   private torrentPromises: Map<string, Promise<WebTorrent.Torrent>>;
+  private sweepInterval: NodeJS.Timeout;
 
   constructor() {
     const settings = getSettings();
@@ -38,6 +39,40 @@ class TorrentEngine {
     this.client.on("error", (err) => {
       console.error("WebTorrent error:", err);
     });
+
+    // Clean leftover cache from previous runs/crashes
+    this.cleanOrphanedCache();
+
+    // Sweep for orphaned torrents every 2 minutes
+    this.sweepInterval = setInterval(() => this.sweepOrphanedTorrents(), 120000);
+  }
+
+  // Delete cache folders left over from a previous server run
+  private cleanOrphanedCache(): void {
+    try {
+      const entries = readdirSync(CACHE_PATH, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.name === "subtitles") continue;
+        const fullPath = join(CACHE_PATH, entry.name);
+        console.log(`Cleaning orphaned cache: ${entry.name}`);
+        rmSync(fullPath, { recursive: true, force: true });
+      }
+    } catch (err) {
+      console.error("Failed to clean orphaned cache:", err);
+    }
+  }
+
+  // Remove torrents with no active sessions and no pending cleanup timer
+  private sweepOrphanedTorrents(): void {
+    for (const torrent of this.client.torrents) {
+      const hash = torrent.infoHash;
+      const sessionCount = this.sessions.get(hash)?.size || 0;
+      const hasTimer = this.cleanupTimers.has(hash);
+      if (sessionCount === 0 && !hasTimer) {
+        console.log(`Sweep: removing orphaned torrent ${torrent.name} (${hash})`);
+        this.removeTorrent(hash);
+      }
+    }
   }
 
   // Add torrent from magnet or .torrent URL, returns when metadata is ready
@@ -130,6 +165,11 @@ class TorrentEngine {
         (t) => t.infoHash.toLowerCase() === infoHash.toLowerCase()
       ) || null
     );
+  }
+
+  // Find a torrent by its magnetURI (for .torrent URL lookups where infoHash is unknown)
+  findTorrentByMagnetURI(uri: string): WebTorrent.Torrent | null {
+    return this.client.torrents.find((t) => t.magnetURI === uri) || null;
   }
 
   // Get torrent info for API response
@@ -262,7 +302,7 @@ class TorrentEngine {
 
   // Cleanup all torrents (for shutdown)
   async destroy(): Promise<void> {
-    // Clear all timers
+    clearInterval(this.sweepInterval);
     for (const timer of this.cleanupTimers.values()) {
       clearTimeout(timer);
     }

@@ -1,55 +1,51 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import WebTorrent from "webtorrent";
 import { isValidTorrentInput, extractInfoHash } from "@/lib/torrent-utils";
+import { getTorrentEngine } from "@/lib/torrent-engine";
 
 const StartSessionSchema = z.object({
   magnet: z.string().refine(isValidTorrentInput, "Invalid magnet link or .torrent URL"),
 });
 
-// Shared client
-declare global {
-  var __webTorrentClient: WebTorrent.Instance | undefined;
-}
+const EndSessionSchema = z.object({
+  infoHash: z.string(),
+  sessionId: z.string(),
+});
 
-function getClient(): WebTorrent.Instance {
-  if (!globalThis.__webTorrentClient) {
-    globalThis.__webTorrentClient = new WebTorrent({
-      maxConns: 100,
-    });
-  }
-  return globalThis.__webTorrentClient;
-}
-
-// POST /api/session - Ensure torrent is loaded, return infoHash
+// POST /api/session - Start or end session (sendBeacon from tab close sends POST)
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
+    const engine = getTorrentEngine();
+
+    // Handle sendBeacon cleanup (tab close sends POST with method: "DELETE")
+    if (body.method === "DELETE" && body.infoHash && body.sessionId) {
+      engine.endSession(body.infoHash, body.sessionId);
+      return NextResponse.json({ success: true });
+    }
+
     const { magnet } = StartSessionSchema.parse(body);
-
-    const client = getClient();
-
     const infoHash = extractInfoHash(magnet);
 
     // Check if already loaded
     const existing = infoHash
-      ? client.torrents.find(
-          (t) => t.infoHash && t.infoHash.toLowerCase() === infoHash
-        )
-      : client.torrents.find((t) => t.magnetURI === magnet) || null;
+      ? engine.getTorrent(infoHash)
+      : engine.findTorrentByMagnetURI(magnet);
 
-    if (existing && existing.ready) {
+    if (existing) {
+      const sessionId = engine.startSession(existing.infoHash);
       return NextResponse.json({
         infoHash: existing.infoHash,
         name: existing.name,
-        ready: true,
+        sessionId,
+        ready: existing.ready,
       });
     }
 
-    // Not loaded yet - that's fine, stream will handle it
+    // Not loaded yet
     return NextResponse.json({
-      infoHash: infoHash || (existing?.infoHash ?? null),
-      ready: !!existing,
+      infoHash,
+      ready: false,
     });
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -66,7 +62,17 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// DELETE /api/session - Optional cleanup (not strictly needed)
-export async function DELETE() {
-  return NextResponse.json({ success: true });
+// DELETE /api/session - End session, trigger cleanup timer
+export async function DELETE(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { infoHash, sessionId } = EndSessionSchema.parse(body);
+
+    const engine = getTorrentEngine();
+    engine.endSession(infoHash, sessionId);
+
+    return NextResponse.json({ success: true });
+  } catch {
+    return NextResponse.json({ success: true });
+  }
 }
