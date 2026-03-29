@@ -6,27 +6,8 @@ import {
   extractSubtitleTrack,
 } from "@/lib/subtitle-extractor";
 import { getTorrentEngine } from "@/lib/torrent-engine";
-import type WebTorrent from "webtorrent";
 
 const CACHE_PATH = join(process.cwd(), "data", "cache");
-
-function srtToVtt(srt: string): string {
-  return (
-    "WEBVTT\n\n" +
-    srt
-      .replace(/\r\n/g, "\n")
-      .replace(/\r/g, "\n")
-      .replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, "$1.$2")
-  );
-}
-
-function findLargestMkv(torrent: WebTorrent.Torrent): WebTorrent.TorrentFile | null {
-  const mkvFiles = torrent.files.filter((f) => /\.mkv$/i.test(f.name));
-  if (mkvFiles.length === 0) return null;
-  return mkvFiles.reduce((largest, file) =>
-    file.length > largest.length ? file : largest
-  );
-}
 
 export async function GET(
   request: NextRequest,
@@ -39,8 +20,10 @@ export async function GET(
 
   try {
     const engine = getTorrentEngine();
-    const torrent = engine.getTorrent(infoHash);
+    const baseUrl = await engine.getWorkerBaseUrl();
 
+    // Check torrent exists
+    const torrent = await engine.getTorrent(infoHash);
     if (!torrent) {
       return NextResponse.json(
         { error: "Torrent not found" },
@@ -48,9 +31,7 @@ export async function GET(
       );
     }
 
-    const subtitleExts = /\.(srt|vtt)$/i;
-
-    // Serve embedded subtitle track as VTT
+    // Serve embedded subtitle track as VTT (needs ffmpeg, stays in Next.js)
     if (embeddedParam !== null) {
       const streamIndex = parseInt(embeddedParam, 10);
       if (isNaN(streamIndex)) {
@@ -60,7 +41,7 @@ export async function GET(
         );
       }
 
-      const mkvFile = findLargestMkv(torrent);
+      const mkvFile = torrent.files.find((f) => /\.mkv$/i.test(f.name));
       if (!mkvFile) {
         return NextResponse.json(
           { error: "No MKV file found" },
@@ -89,30 +70,13 @@ export async function GET(
       });
     }
 
-    // Serve file-based subtitle as VTT
+    // Serve file-based subtitle — proxy to worker
     if (fileIndexParam !== null) {
-      const idx = parseInt(fileIndexParam, 10);
-      const file = torrent.files[idx];
+      const workerUrl = `${baseUrl}/subtitle/${infoHash}?file=${fileIndexParam}`;
+      const workerRes = await fetch(workerUrl);
 
-      if (!file || !subtitleExts.test(file.name)) {
-        return NextResponse.json(
-          { error: "Subtitle file not found" },
-          { status: 404 }
-        );
-      }
-
-      // Read the file content
-      const content = await new Promise<string>((resolve, reject) => {
-        const chunks: Buffer[] = [];
-        const stream = file.createReadStream();
-        stream.on("data", (chunk: Buffer) => chunks.push(chunk));
-        stream.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
-        stream.on("error", reject);
-      });
-
-      const vtt = file.name.endsWith(".vtt") ? content : srtToVtt(content);
-
-      return new NextResponse(vtt, {
+      return new NextResponse(workerRes.body, {
+        status: workerRes.status,
         headers: {
           "Content-Type": "text/vtt; charset=utf-8",
           "Access-Control-Allow-Origin": "*",
@@ -120,26 +84,31 @@ export async function GET(
       });
     }
 
-    // List all subtitle files
+    // List all subtitle files — get from worker + check embedded
+    const workerRes = await fetch(`${baseUrl}/subtitle/${infoHash}`);
+    const workerData = await workerRes.json();
     const subtitles: Array<
       | { name: string; index: number; type: "file" }
       | { name: string; streamIndex: number; type: "embedded" }
-    > = torrent.files
-      .map((f, i) => ({ name: f.name, index: i, type: "file" as const }))
-      .filter((f) => subtitleExts.test(f.name));
+    > = workerData.subtitles || [];
 
     // Check for embedded subtitles in MKV files
     const hasFFmpeg = await isFFmpegAvailable();
     if (hasFFmpeg) {
-      const mkvFile = findLargestMkv(torrent);
+      const mkvFile = torrent.files
+        .filter((f) => /\.mkv$/i.test(f.name))
+        .reduce(
+          (largest, file) =>
+            !largest || file.length > largest.length ? file : largest,
+          null as (typeof torrent.files)[number] | null
+        );
+
       if (mkvFile) {
         const filePath = join(CACHE_PATH, mkvFile.path);
         const embedded = await probeEmbeddedSubtitles(filePath);
         for (const track of embedded) {
           const name =
-            track.title ||
-            track.language ||
-            `Track ${track.streamIndex}`;
+            track.title || track.language || `Track ${track.streamIndex}`;
           subtitles.push({
             name,
             streamIndex: track.streamIndex,

@@ -5,15 +5,8 @@ import { getTorrentEngine } from "@/lib/torrent-engine";
 export async function GET() {
   try {
     const engine = getTorrentEngine();
-    const torrents = engine.getActiveTorrents();
-
-    return NextResponse.json({
-      count: torrents.length,
-      torrents: torrents.map((t) => ({
-        ...t,
-        sessionCount: engine.getSessionCount(t.infoHash),
-      })),
-    });
+    const data = await engine.getActiveTorrents();
+    return NextResponse.json(data);
   } catch (error) {
     console.error("Failed to get torrents:", error);
     return NextResponse.json(

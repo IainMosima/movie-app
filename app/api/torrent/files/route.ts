@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { isValidTorrentInput } from "@/lib/torrent-utils";
 import { getTorrentEngine } from "@/lib/torrent-engine";
-import type WebTorrent from "webtorrent";
+import type { TorrentInfo } from "@/types";
 
 const GetFilesSchema = z.object({
   magnet: z.string().refine(isValidTorrentInput, "Invalid magnet link or .torrent URL"),
@@ -49,9 +49,9 @@ export async function POST(request: NextRequest) {
     const { magnet } = GetFilesSchema.parse(body);
 
     const engine = getTorrentEngine();
-    const torrent = await engine.addTorrent(magnet);
+    const torrentInfo = await engine.addTorrent(magnet);
 
-    return NextResponse.json(buildResponse(torrent));
+    return NextResponse.json(buildResponse(torrentInfo));
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json(
@@ -70,9 +70,9 @@ export async function POST(request: NextRequest) {
   }
 }
 
-function buildResponse(torrent: WebTorrent.Torrent): TorrentFilesResponse {
-  const files: TorrentFile[] = torrent.files.map((file, index) => ({
-    index,
+function buildResponse(torrent: TorrentInfo): TorrentFilesResponse {
+  const files: TorrentFile[] = torrent.files.map((file) => ({
+    index: file.index,
     name: file.name,
     path: file.path,
     size: file.length,
@@ -81,7 +81,6 @@ function buildResponse(torrent: WebTorrent.Torrent): TorrentFilesResponse {
     extension: getExtension(file.name),
   }));
 
-  // Find main video (largest video file)
   let mainVideoIndex: number | null = null;
   let maxSize = 0;
 

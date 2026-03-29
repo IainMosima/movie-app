@@ -1,319 +1,186 @@
 import "server-only";
-import WebTorrent from "webtorrent";
+import { fork, type ChildProcess } from "child_process";
 import { join } from "path";
-import { rmSync, existsSync, mkdirSync, readdirSync } from "fs";
-import { getSettings } from "./settings-store";
-import { extractInfoHash } from "./torrent-utils";
-import type { TorrentInfo, TorrentFileInfo } from "@/types";
+import type { TorrentInfo } from "@/types";
 
 declare global {
   // eslint-disable-next-line no-var
   var __torrentEngine: TorrentEngine | undefined;
 }
 
-const CACHE_PATH = join(process.cwd(), "data", "cache");
-
-// Ensure cache directory exists
-if (!existsSync(CACHE_PATH)) {
-  mkdirSync(CACHE_PATH, { recursive: true });
-}
+const WORKER_SCRIPT = join(process.cwd(), "lib", "torrent-worker.mjs");
 
 class TorrentEngine {
-  private client: WebTorrent.Instance;
-  private sessions: Map<string, Set<string>>; // infoHash -> sessionIds
-  private cleanupTimers: Map<string, NodeJS.Timeout>;
-  private torrentPromises: Map<string, Promise<WebTorrent.Torrent>>;
-  private sweepInterval: NodeJS.Timeout;
+  private worker: ChildProcess | null = null;
+  private workerPort: number | null = null;
+  private readyPromise: Promise<void>;
+  private resolveReady!: () => void;
 
   constructor() {
-    const settings = getSettings();
-    this.client = new WebTorrent({
-      maxConns: settings.maxConnections,
-      downloadLimit: settings.downloadLimit === -1 ? 0 : settings.downloadLimit,
-      uploadLimit: settings.uploadLimit === -1 ? 0 : settings.uploadLimit,
+    this.readyPromise = new Promise((resolve) => {
+      this.resolveReady = resolve;
     });
-    this.sessions = new Map();
-    this.cleanupTimers = new Map();
-    this.torrentPromises = new Map();
+    this.spawnWorker();
+  }
 
-    this.client.on("error", (err) => {
-      console.error("WebTorrent error:", err);
+  private spawnWorker(): void {
+    this.worker = fork(WORKER_SCRIPT, [], {
+      stdio: ["pipe", "inherit", "inherit", "ipc"],
+      cwd: process.cwd(),
     });
 
-    // Clean leftover cache from previous runs/crashes
-    this.cleanOrphanedCache();
-
-    // Sweep for orphaned torrents every 2 minutes
-    this.sweepInterval = setInterval(() => this.sweepOrphanedTorrents(), 120000);
-  }
-
-  // Delete cache folders left over from a previous server run
-  private cleanOrphanedCache(): void {
-    try {
-      const entries = readdirSync(CACHE_PATH, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.name === "subtitles") continue;
-        const fullPath = join(CACHE_PATH, entry.name);
-        console.log(`Cleaning orphaned cache: ${entry.name}`);
-        rmSync(fullPath, { recursive: true, force: true });
+    this.worker.on("message", (msg: { type: string; port?: number }) => {
+      if (msg.type === "ready" && msg.port) {
+        this.workerPort = msg.port;
+        console.log(`Torrent worker ready on port ${msg.port}`);
+        this.resolveReady();
       }
-    } catch (err) {
-      console.error("Failed to clean orphaned cache:", err);
-    }
-  }
+    });
 
-  // Remove torrents with no active sessions and no pending cleanup timer
-  private sweepOrphanedTorrents(): void {
-    for (const torrent of this.client.torrents) {
-      const hash = torrent.infoHash;
-      const sessionCount = this.sessions.get(hash)?.size || 0;
-      const hasTimer = this.cleanupTimers.has(hash);
-      if (sessionCount === 0 && !hasTimer) {
-        console.log(`Sweep: removing orphaned torrent ${torrent.name} (${hash})`);
-        this.removeTorrent(hash);
-      }
-    }
-  }
-
-  // Add torrent from magnet or .torrent URL, returns when metadata is ready
-  async addTorrent(magnet: string): Promise<WebTorrent.Torrent> {
-    const infoHash = extractInfoHash(magnet);
-
-    // Check if torrent already exists
-    const existing = infoHash
-      ? this.client.torrents.find(
-          (t) => t.infoHash === infoHash || t.magnetURI === magnet
-        )
-      : this.client.torrents.find((t) => t.magnetURI === magnet);
-    if (existing) {
-      // Wait for it to be ready if not already
-      if (existing.ready) return existing;
-      return new Promise((resolve) => {
-        existing.once("ready", () => resolve(existing));
-      });
-    }
-
-    // Check if we're already adding this torrent
-    const dedupKey = infoHash || magnet;
-    if (this.torrentPromises.has(dedupKey)) {
-      return this.torrentPromises.get(dedupKey)!;
-    }
-
-    const promise = new Promise<WebTorrent.Torrent>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        reject(new Error("Torrent metadata timeout"));
-      }, 60000);
-
-      try {
-        const torrent = this.client.add(magnet, {
-          path: CACHE_PATH,
+    this.worker.on("exit", (code) => {
+      console.error(`Torrent worker exited with code ${code}`);
+      this.workerPort = null;
+      // Auto-restart
+      setTimeout(() => {
+        this.readyPromise = new Promise((resolve) => {
+          this.resolveReady = resolve;
         });
+        this.spawnWorker();
+      }, 1000);
+    });
+  }
 
-        torrent.on("ready", () => {
-          clearTimeout(timeout);
-          console.log(`Torrent ready: ${torrent.name} (${torrent.infoHash})`);
-          resolve(torrent);
-        });
+  private async baseUrl(): Promise<string> {
+    await this.readyPromise;
+    return `http://127.0.0.1:${this.workerPort}`;
+  }
 
-        torrent.on("error", (err) => {
-          clearTimeout(timeout);
-          const message = err instanceof Error ? err.message : String(err);
-          if (message.includes("duplicate torrent")) {
-            const hashMatch = message.match(/([a-f0-9]{40})/i);
-            const dup = hashMatch
-              ? this.client.torrents.find((t) => t.infoHash === hashMatch[1])
-              : null;
-            if (dup) {
-              if (dup.ready) resolve(dup);
-              else dup.once("ready", () => { clearTimeout(timeout); resolve(dup); });
-              return;
-            }
-          }
-          console.error(`Torrent error: ${message}`);
-          reject(err);
-        });
-      } catch (err) {
-        clearTimeout(timeout);
-        const message = err instanceof Error ? err.message : String(err);
-        if (message.includes("duplicate torrent")) {
-          const hashMatch = message.match(/([a-f0-9]{40})/i);
-          const dup = hashMatch
-            ? this.client.torrents.find((t) => t.infoHash === hashMatch[1])
-            : null;
-          if (dup) {
-            if (dup.ready) resolve(dup);
-            else dup.once("ready", () => { clearTimeout(timeout); resolve(dup); });
-            return;
-          }
-        }
-        reject(err);
+  private async request(path: string, options?: RequestInit): Promise<Response> {
+    const base = await this.baseUrl();
+    return fetch(`${base}${path}`, options);
+  }
+
+  // --- Public API (matches the old TorrentEngine interface) ---
+
+  async addTorrent(magnet: string): Promise<TorrentInfo> {
+    const res = await this.request("/add", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ magnet }),
+    });
+
+    const data = await res.json();
+
+    // If torrent is already ready, return immediately
+    if (res.status === 200) return data;
+
+    // 202 = loading. Poll until ready (up to 60s)
+    const infoHash = data.infoHash;
+    if (!infoHash) throw new Error("No infoHash returned");
+
+    for (let i = 0; i < 60; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      const statusRes = await this.request(`/torrent/${infoHash}`);
+      if (statusRes.ok) {
+        const info = await statusRes.json();
+        if (info.ready) return info;
       }
-    });
-
-    this.torrentPromises.set(dedupKey, promise);
-    promise.finally(() => {
-      this.torrentPromises.delete(dedupKey);
-    });
-
-    return promise;
-  }
-
-  // Get an existing torrent by infoHash
-  getTorrent(infoHash: string): WebTorrent.Torrent | null {
-    return (
-      this.client.torrents.find(
-        (t) => t.infoHash.toLowerCase() === infoHash.toLowerCase()
-      ) || null
-    );
-  }
-
-  // Find a torrent by its magnetURI (for .torrent URL lookups where infoHash is unknown)
-  findTorrentByMagnetURI(uri: string): WebTorrent.Torrent | null {
-    return this.client.torrents.find((t) => t.magnetURI === uri) || null;
-  }
-
-  // Get torrent info for API response
-  getTorrentInfo(torrent: WebTorrent.Torrent): TorrentInfo {
-    const files: TorrentFileInfo[] = torrent.files.map((f, index) => ({
-      name: f.name,
-      path: f.path,
-      length: f.length,
-      index,
-    }));
-
-    return {
-      infoHash: torrent.infoHash,
-      name: torrent.name,
-      files,
-      progress: torrent.progress,
-      downloadSpeed: torrent.downloadSpeed,
-      uploadSpeed: torrent.uploadSpeed,
-      numPeers: torrent.numPeers,
-      ready: torrent.ready,
-    };
-  }
-
-  // Find the main video file in a torrent
-  findVideoFile(torrent: WebTorrent.Torrent): WebTorrent.TorrentFile | null {
-    const videoExtensions = /\.(mp4|mkv|webm|avi|mov|m4v)$/i;
-    const videoFiles = torrent.files.filter((f) => videoExtensions.test(f.name));
-
-    if (videoFiles.length === 0) return null;
-
-    // Return the largest video file
-    return videoFiles.reduce((largest, file) =>
-      file.length > largest.length ? file : largest
-    );
-  }
-
-  // Get file by index
-  getFileByIndex(
-    torrent: WebTorrent.Torrent,
-    index: number
-  ): WebTorrent.TorrentFile | null {
-    return torrent.files[index] || null;
-  }
-
-  // Session management for auto-cleanup
-  startSession(infoHash: string): string {
-    const sessionId = `sess_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-
-    // Cancel any pending cleanup
-    const timer = this.cleanupTimers.get(infoHash);
-    if (timer) {
-      clearTimeout(timer);
-      this.cleanupTimers.delete(infoHash);
     }
 
-    // Add session
-    if (!this.sessions.has(infoHash)) {
-      this.sessions.set(infoHash, new Set());
-    }
-    this.sessions.get(infoHash)!.add(sessionId);
+    throw new Error("Torrent metadata timeout");
+  }
 
-    console.log(
-      `Session started: ${sessionId} for ${infoHash} (total: ${this.sessions.get(infoHash)!.size})`
+  async getTorrent(infoHash: string): Promise<TorrentInfo | null> {
+    const res = await this.request(`/torrent/${infoHash}`);
+    if (res.status === 404) return null;
+    if (!res.ok) return null;
+    return res.json();
+  }
+
+  async findTorrentByMagnetURI(uri: string): Promise<TorrentInfo | null> {
+    // Use the status endpoint which accepts magnet
+    const res = await this.request(
+      `/status?magnet=${encodeURIComponent(uri)}`
     );
-    return sessionId;
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data.status === "not_found") return null;
+    return data;
   }
 
-  // End a session, starts cleanup timer if no sessions left
-  endSession(infoHash: string, sessionId: string): void {
-    const sessions = this.sessions.get(infoHash);
-    if (!sessions) return;
-
-    sessions.delete(sessionId);
-    console.log(
-      `Session ended: ${sessionId} for ${infoHash} (remaining: ${sessions.size})`
+  async getTorrentStatus(
+    magnet: string
+  ): Promise<{
+    status: string;
+    name?: string;
+    infoHash?: string;
+    peers?: number;
+    progress?: number;
+    ready?: boolean;
+    files?: number;
+  }> {
+    const res = await this.request(
+      `/status?magnet=${encodeURIComponent(magnet)}`
     );
-
-    if (sessions.size === 0) {
-      this.sessions.delete(infoHash);
-      this.scheduleCleanup(infoHash);
-    }
+    return res.json();
   }
 
-  // Schedule cleanup after delay
-  private scheduleCleanup(infoHash: string): void {
-    const settings = getSettings();
-    const delay = settings.cleanupDelaySeconds * 1000;
-
-    console.log(`Scheduling cleanup for ${infoHash} in ${delay}ms`);
-
-    const timer = setTimeout(() => {
-      this.removeTorrent(infoHash);
-    }, delay);
-
-    this.cleanupTimers.set(infoHash, timer);
-  }
-
-  // Remove torrent and delete files
-  removeTorrent(infoHash: string): void {
-    const torrent = this.getTorrent(infoHash);
-    if (!torrent) return;
-
-    const torrentPath = join(CACHE_PATH, torrent.name);
-
-    console.log(`Removing torrent: ${torrent.name} (${infoHash})`);
-
-    torrent.destroy({ destroyStore: true }, () => {
-      // Also clean up any remaining files
-      try {
-        if (existsSync(torrentPath)) {
-          rmSync(torrentPath, { recursive: true, force: true });
-        }
-      } catch (err) {
-        console.error(`Failed to cleanup files for ${infoHash}:`, err);
-      }
+  async startSession(
+    magnet: string
+  ): Promise<{
+    infoHash: string;
+    name?: string;
+    sessionId?: string;
+    ready: boolean;
+  }> {
+    const res = await this.request("/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ magnet }),
     });
-
-    this.cleanupTimers.delete(infoHash);
+    return res.json();
   }
 
-  // Get all active torrents info
-  getActiveTorrents(): TorrentInfo[] {
-    return this.client.torrents.map((t) => this.getTorrentInfo(t));
+  async startSessionBeaconCleanup(
+    infoHash: string,
+    sessionId: string
+  ): Promise<void> {
+    await this.request("/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ method: "DELETE", infoHash, sessionId }),
+    });
   }
 
-  // Get session count for a torrent
-  getSessionCount(infoHash: string): number {
-    return this.sessions.get(infoHash)?.size || 0;
+  async endSession(infoHash: string, sessionId: string): Promise<void> {
+    await this.request("/session", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ infoHash, sessionId }),
+    });
   }
 
-  // Cleanup all torrents (for shutdown)
+  async getActiveTorrents(): Promise<{
+    count: number;
+    torrents: (TorrentInfo & { sessionCount: number })[];
+  }> {
+    const res = await this.request("/torrents");
+    return res.json();
+  }
+
+  /**
+   * Returns the worker's base URL for proxying stream/subtitle requests.
+   * The API routes use this to build proxy URLs.
+   */
+  async getWorkerBaseUrl(): Promise<string> {
+    return this.baseUrl();
+  }
+
   async destroy(): Promise<void> {
-    clearInterval(this.sweepInterval);
-    for (const timer of this.cleanupTimers.values()) {
-      clearTimeout(timer);
+    if (this.worker) {
+      this.worker.kill("SIGTERM");
+      this.worker = null;
     }
-    this.cleanupTimers.clear();
-    this.sessions.clear();
-
-    return new Promise((resolve) => {
-      this.client.destroy(() => {
-        resolve();
-      });
-    });
   }
 }
 

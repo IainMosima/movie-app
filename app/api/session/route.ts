@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { isValidTorrentInput, extractInfoHash } from "@/lib/torrent-utils";
+import { isValidTorrentInput } from "@/lib/torrent-utils";
 import { getTorrentEngine } from "@/lib/torrent-engine";
 
 const StartSessionSchema = z.object({
@@ -20,33 +20,13 @@ export async function POST(request: NextRequest) {
 
     // Handle sendBeacon cleanup (tab close sends POST with method: "DELETE")
     if (body.method === "DELETE" && body.infoHash && body.sessionId) {
-      engine.endSession(body.infoHash, body.sessionId);
+      await engine.startSessionBeaconCleanup(body.infoHash, body.sessionId);
       return NextResponse.json({ success: true });
     }
 
     const { magnet } = StartSessionSchema.parse(body);
-    const infoHash = extractInfoHash(magnet);
-
-    // Check if already loaded
-    const existing = infoHash
-      ? engine.getTorrent(infoHash)
-      : engine.findTorrentByMagnetURI(magnet);
-
-    if (existing) {
-      const sessionId = engine.startSession(existing.infoHash);
-      return NextResponse.json({
-        infoHash: existing.infoHash,
-        name: existing.name,
-        sessionId,
-        ready: existing.ready,
-      });
-    }
-
-    // Not loaded yet
-    return NextResponse.json({
-      infoHash,
-      ready: false,
-    });
+    const data = await engine.startSession(magnet);
+    return NextResponse.json(data);
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json(
@@ -69,7 +49,7 @@ export async function DELETE(request: NextRequest) {
     const { infoHash, sessionId } = EndSessionSchema.parse(body);
 
     const engine = getTorrentEngine();
-    engine.endSession(infoHash, sessionId);
+    await engine.endSession(infoHash, sessionId);
 
     return NextResponse.json({ success: true });
   } catch {

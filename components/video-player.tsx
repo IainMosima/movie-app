@@ -11,6 +11,7 @@ import {
   PictureInPicture2,
   Loader2,
   Subtitles,
+  AlertCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -42,6 +43,7 @@ export function VideoPlayer({
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const stalledTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -61,6 +63,7 @@ export function VideoPlayer({
   const lastTapRef = useRef<{ time: number; side: "left" | "right" | null }>({ time: 0, side: null });
   const lastActionTimeRef = useRef(0);
   const [prefersAlwaysOnControls, setPrefersAlwaysOnControls] = useState(false);
+  const [streamError, setStreamError] = useState<string | null>(null);
 
   // Show controls on mouse move
   const handleMouseMove = useCallback(() => {
@@ -150,6 +153,29 @@ export function VideoPlayer({
       setVolume(video.volume);
       setIsMuted(video.muted);
     };
+    const handleError = () => {
+      if (!video.error) return;
+      if (video.error.code === 2 || video.error.code === 4) {
+        setStreamError("Stream unavailable. No peers found for this torrent.");
+      } else {
+        setStreamError("Playback error occurred.");
+      }
+      setIsBuffering(false);
+    };
+    const handleStalled = () => {
+      if (stalledTimeoutRef.current) clearTimeout(stalledTimeoutRef.current);
+      stalledTimeoutRef.current = setTimeout(() => {
+        setStreamError("Stream stalled. No data is being received.");
+        setIsBuffering(false);
+      }, 120_000);
+    };
+    const handleStalledRecovery = () => {
+      if (stalledTimeoutRef.current) {
+        clearTimeout(stalledTimeoutRef.current);
+        stalledTimeoutRef.current = null;
+      }
+      if (streamError) setStreamError(null);
+    };
 
     video.addEventListener("play", handlePlay);
     video.addEventListener("pause", handlePause);
@@ -160,6 +186,9 @@ export function VideoPlayer({
     video.addEventListener("canplay", handleCanPlay);
     video.addEventListener("progress", handleProgress);
     video.addEventListener("volumechange", handleVolumeChange);
+    video.addEventListener("error", handleError);
+    video.addEventListener("stalled", handleStalled);
+    video.addEventListener("progress", handleStalledRecovery);
 
     return () => {
       video.removeEventListener("play", handlePlay);
@@ -171,8 +200,12 @@ export function VideoPlayer({
       video.removeEventListener("canplay", handleCanPlay);
       video.removeEventListener("progress", handleProgress);
       video.removeEventListener("volumechange", handleVolumeChange);
+      video.removeEventListener("error", handleError);
+      video.removeEventListener("stalled", handleStalled);
+      video.removeEventListener("progress", handleStalledRecovery);
+      if (stalledTimeoutRef.current) clearTimeout(stalledTimeoutRef.current);
     };
-  }, []);
+  }, [streamError]);
 
   // Fullscreen change handler (with vendor prefixes for VIDAA/WebKit)
   useEffect(() => {
@@ -245,12 +278,17 @@ export function VideoPlayer({
     parsedCuesRef.current.clear();
 
     subtitles.forEach((sub, i) => {
-      fetch(sub.src)
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10_000);
+      fetch(sub.src, { signal: controller.signal })
         .then((res) => res.text())
         .then((text) => {
+          clearTimeout(timeout);
           parsedCuesRef.current.set(i, parseVTT(text));
         })
-        .catch((err) => console.error(`Failed to load subtitle ${sub.label}:`, err));
+        .catch(() => {
+          clearTimeout(timeout);
+        });
     });
   }, [subtitles, parseVTT]);
 
@@ -820,8 +858,38 @@ export function VideoPlayer({
         </div>
       )}
 
+      {/* Stream error overlay */}
+      {streamError && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-20">
+          <div className="flex flex-col items-center gap-4 max-w-md text-center px-6">
+            <AlertCircle className="h-12 w-12 text-red-500" />
+            <p className="text-lg text-white font-medium">{streamError}</p>
+            <p className="text-sm text-zinc-400">
+              The torrent may have no active peers. Try again later or choose a different source.
+            </p>
+            <div className="flex gap-3">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setStreamError(null);
+                  setIsBuffering(true);
+                  videoRef.current?.load();
+                }}
+              >
+                Retry
+              </Button>
+              {onClose && (
+                <Button variant="default" onClick={onClose}>
+                  Go Back
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Buffering overlay */}
-      {isBuffering && (
+      {isBuffering && !streamError && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/50">
           <div className="flex flex-col items-center gap-3">
             <Loader2 className="h-12 w-12 text-white animate-spin" />
