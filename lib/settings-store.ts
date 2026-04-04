@@ -10,8 +10,9 @@ const DEFAULT_SETTINGS: EngineSettings = {
   uploadLimit: -1,
   maxConnections: 55,
   cleanupDelaySeconds: 30,
-  prebufferSeconds: 30,
-  bufferSizeMB: 300, // 300MB default buffer for smoother playback
+  prebufferSeconds: 90, // wait up to 90s for the initial safety buffer
+  bufferSizeMB: 200, // cache ~200MB so TVs can coast through peer stalls
+  prebufferMode: "strict",
 };
 
 function ensureSettingsFile(): void {

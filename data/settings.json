@@ -3,6 +3,7 @@
   "uploadLimit": -1,
   "maxConnections": 100,
   "cleanupDelaySeconds": 300,
-  "prebufferSeconds": 120,
-  "bufferSizeMB": 300
+  "prebufferSeconds": 90,
+  "bufferSizeMB": 200,
+  "prebufferMode": "strict"
 }

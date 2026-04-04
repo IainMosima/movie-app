@@ -7,7 +7,9 @@ const UpdateSettingsSchema = z.object({
   uploadLimit: z.number().optional(),
   maxConnections: z.number().min(1).max(200).optional(),
   cleanupDelaySeconds: z.number().min(0).max(3600).optional(),
-  prebufferSeconds: z.number().min(0).max(120).optional(),
+  prebufferSeconds: z.number().min(0).max(180).optional(),
+  bufferSizeMB: z.number().min(50).max(500).optional(),
+  prebufferMode: z.enum(["strict", "timeout"]).optional(),
 });
 
 // GET /api/settings - Get engine settings

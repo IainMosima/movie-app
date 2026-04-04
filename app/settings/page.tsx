@@ -15,8 +15,9 @@ export default function SettingsPage() {
   const [downloadLimit, setDownloadLimit] = useState(-1);
   const [uploadLimit, setUploadLimit] = useState(-1);
   const [cleanupDelay, setCleanupDelay] = useState(30);
-  const [prebufferSeconds, setPrebufferSeconds] = useState(30);
-  const [bufferSizeMB, setBufferSizeMB] = useState(300);
+  const [prebufferSeconds, setPrebufferSeconds] = useState(90);
+  const [bufferSizeMB, setBufferSizeMB] = useState(200);
+  const [prebufferMode, setPrebufferMode] = useState<"strict" | "timeout">("strict");
   const [isSaving, setIsSaving] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
 
@@ -29,6 +30,7 @@ export default function SettingsPage() {
       setCleanupDelay(settings.cleanupDelaySeconds);
       setPrebufferSeconds(settings.prebufferSeconds);
       setBufferSizeMB(settings.bufferSizeMB || 300);
+      setPrebufferMode(settings.prebufferMode || "strict");
     }
   }, [settings]);
 
@@ -42,6 +44,7 @@ export default function SettingsPage() {
         cleanupDelaySeconds: cleanupDelay,
         prebufferSeconds,
         bufferSizeMB,
+        prebufferMode,
       });
       toast.success("Settings saved");
     } catch (err) {
@@ -184,8 +187,8 @@ export default function SettingsPage() {
                   className="bg-zinc-800 border-zinc-700 w-32"
                 />
                 <p className="text-xs text-zinc-600 mt-1">
-                  Amount of data to buffer ahead (50-500 MB). Higher values give more
-                  viewing time before rebuffering. Recommended: 150-200 MB for 4K.
+                  Amount of data to buffer ahead (50-500 MB). Higher values keep TVs
+                  playing through peer stalls. Recommended: 180-220 MB for big screens.
                 </p>
               </div>
 
@@ -198,12 +201,50 @@ export default function SettingsPage() {
                   value={prebufferSeconds}
                   onChange={(e) => setPrebufferSeconds(Number(e.target.value))}
                   min={0}
-                  max={120}
+                  max={180}
                   className="bg-zinc-800 border-zinc-700 w-32"
                 />
                 <p className="text-xs text-zinc-600 mt-1">
-                  Seconds to wait before playback starts (0-120). Higher values
-                  mean smoother playback but longer initial wait.
+                  Seconds to wait before playback starts (0-180). 0 waits until the
+                  full buffer is ready, higher values cap how long we wait.
+                </p>
+              </div>
+
+              <div>
+                <label className="text-sm text-zinc-400 mb-2 block">
+                  Prebuffer Mode
+                </label>
+                <div className="flex gap-3">
+                  {[
+                    {
+                      value: "strict",
+                      label: "Strict (Recommended)",
+                      description: "Wait for the full buffer before playback begins",
+                    },
+                    {
+                      value: "timeout",
+                      label: "Timeout",
+                      description: "Start after prebufferSeconds even if buffer is partial",
+                    },
+                  ].map((option) => (
+                    <Button
+                      key={option.value}
+                      type="button"
+                      variant={prebufferMode === option.value ? "default" : "outline"}
+                      className="flex-1 justify-start text-left h-auto py-3 px-4 border-zinc-700"
+                      onClick={() => setPrebufferMode(option.value as "strict" | "timeout")}
+                    >
+                      <div>
+                        <p className="font-medium text-sm">{option.label}</p>
+                        <p className="text-xs text-zinc-400 mt-1">{option.description}</p>
+                      </div>
+                    </Button>
+                  ))}
+                </div>
+                <p className="text-xs text-zinc-600 mt-2">
+                  Strict mode eliminates mid-stream stalls on TVs by buffering the entire target
+                  size (e.g., 200MB) before playback starts. Timeout mode matches the previous
+                  behaviour for faster starts.
                 </p>
               </div>
             </div>

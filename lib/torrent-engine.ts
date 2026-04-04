@@ -176,6 +176,14 @@ class TorrentEngine {
     return this.baseUrl();
   }
 
+  /**
+   * Returns the worker's port for direct LAN access (TV browsers).
+   */
+  async getWorkerPort(): Promise<number> {
+    await this.readyPromise;
+    return this.workerPort!;
+  }
+
   async destroy(): Promise<void> {
     if (this.worker) {
       this.worker.kill("SIGTERM");

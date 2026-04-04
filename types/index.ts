@@ -19,6 +19,7 @@ export interface EngineSettings {
   cleanupDelaySeconds: number;
   prebufferSeconds: number;
   bufferSizeMB: number;
+  prebufferMode: "strict" | "timeout";
 }
 
 // Search result types

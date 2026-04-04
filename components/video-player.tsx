@@ -1,6 +1,7 @@
 "use client";
 
-import { useRef, useState, useEffect, useCallback } from "react";
+/* eslint-disable react-hooks/refs */
+import { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import {
   Play,
   Pause,
@@ -25,20 +26,27 @@ import { cn, formatDuration } from "@/lib/utils";
 
 interface VideoPlayerProps {
   src: string;
+  fallbackSrc?: string;
   title?: string;
   onClose?: () => void;
   autoPlay?: boolean;
   subtitles?: { label: string; src: string }[];
+  strictPrebuffering?: boolean;
+  strictBufferSizeMB?: number;
 }
 
 const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+const STALL_RECOVERY_MS = 45_000;
 
 export function VideoPlayer({
   src,
+  fallbackSrc,
   title,
   onClose,
   autoPlay = true,
   subtitles = [],
+  strictPrebuffering = false,
+  strictBufferSizeMB,
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -61,9 +69,100 @@ export function VideoPlayer({
   const parsedCuesRef = useRef<Map<number, { start: number; end: number; text: string }[]>>(new Map());
   const [skipIndicator, setSkipIndicator] = useState<{ side: "left" | "right"; show: boolean; seconds: number }>({ side: "left", show: false, seconds: 10 });
   const lastTapRef = useRef<{ time: number; side: "left" | "right" | null }>({ time: 0, side: null });
-  const lastActionTimeRef = useRef(0);
+  const [lastActionTime, setLastActionTime] = useState(0);
   const [prefersAlwaysOnControls, setPrefersAlwaysOnControls] = useState(false);
+  const isTvPlaybackRef = useRef(false);
   const [streamError, setStreamError] = useState<string | null>(null);
+  const [playbackSrc, setPlaybackSrc] = useState(src);
+  const [isUsingFallbackStream, setIsUsingFallbackStream] = useState(false);
+  const [fallbackNotice, setFallbackNotice] = useState<string | null>(null);
+  const [srcRevision, setSrcRevision] = useState(0);
+  const pendingResumeTimeRef = useRef<number | null>(null);
+  const recoveryAttemptsRef = useRef(0);
+  const [isInitialStrictBuffering, setIsInitialStrictBuffering] = useState<boolean>(
+    strictPrebuffering
+  );
+
+  useEffect(() => {
+    setPlaybackSrc(src);
+    setIsUsingFallbackStream(false);
+    setSrcRevision(0);
+    pendingResumeTimeRef.current = null;
+  }, [src]);
+
+  useEffect(() => {
+    setIsInitialStrictBuffering(strictPrebuffering);
+  }, [strictPrebuffering, playbackSrc]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.load();
+    setStreamError(null);
+    setIsBuffering(true);
+    setBuffered(0);
+    setCurrentTime(0);
+    if (autoPlay) {
+      const playPromise = video.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(() => {});
+      }
+    }
+  }, [playbackSrc, autoPlay]);
+
+  useEffect(() => {
+    if (!fallbackNotice) return;
+    const timer = setTimeout(() => setFallbackNotice(null), 5000);
+    return () => clearTimeout(timer);
+  }, [fallbackNotice]);
+
+  const resolvedSrc = useMemo(() => {
+    if (!playbackSrc) return "";
+    if (srcRevision === 0) return playbackSrc;
+    const separator = playbackSrc.includes("?") ? "&" : "?";
+    return `${playbackSrc}${separator}v=${srcRevision}`;
+  }, [playbackSrc, srcRevision]);
+
+  const trySwitchToFallback = useCallback(
+    (noticeMessage?: string) => {
+      if (
+        !fallbackSrc ||
+        (isUsingFallbackStream && playbackSrc === fallbackSrc)
+      ) {
+        return false;
+      }
+      setIsUsingFallbackStream(true);
+      setPlaybackSrc(fallbackSrc);
+      setFallbackNotice(
+        noticeMessage || "Direct stream unreachable. Using fallback route."
+      );
+      pendingResumeTimeRef.current = null;
+      return true;
+    },
+    [fallbackSrc, isUsingFallbackStream, playbackSrc]
+  );
+
+  const recoverStream = useCallback(
+    (message: string) => {
+      const video = videoRef.current;
+      if (!video) return false;
+
+      recoveryAttemptsRef.current += 1;
+      const resumeTime = video.currentTime || 0;
+      pendingResumeTimeRef.current = resumeTime;
+      setIsBuffering(true);
+      setStreamError(null);
+
+      if (trySwitchToFallback(message)) {
+        return true;
+      }
+
+      setFallbackNotice(message);
+      setSrcRevision((rev) => rev + 1);
+      return true;
+    },
+    [trySwitchToFallback]
+  );
 
   // Show controls on mouse move
   const handleMouseMove = useCallback(() => {
@@ -105,7 +204,11 @@ export function VideoPlayer({
       );
     };
 
-    const update = () => setPrefersAlwaysOnControls(isActualTV());
+    const update = () => {
+      const tv = isActualTV();
+      isTvPlaybackRef.current = tv;
+      setPrefersAlwaysOnControls(tv);
+    };
     update();
 
     // No need for media query listener since we only check user agent
@@ -141,7 +244,11 @@ export function VideoPlayer({
     const handleTimeUpdate = () => setCurrentTime(video.currentTime);
     const handleDurationChange = () => setDuration(video.duration);
     const handleWaiting = () => setIsBuffering(true);
-    const handlePlaying = () => setIsBuffering(false);
+    const handlePlaying = () => {
+      setIsBuffering(false);
+      recoveryAttemptsRef.current = 0;
+      setIsInitialStrictBuffering(false);
+    };
     const handleCanPlay = () => setIsBuffering(false);
     const handleProgress = () => {
       if (video.buffered.length > 0) {
@@ -155,6 +262,10 @@ export function VideoPlayer({
     };
     const handleError = () => {
       if (!video.error) return;
+      if (recoveryAttemptsRef.current < 3) {
+        recoverStream("Connection lost. Retrying stream...");
+        return;
+      }
       if (video.error.code === 2 || video.error.code === 4) {
         setStreamError("Stream unavailable. No peers found for this torrent.");
       } else {
@@ -163,11 +274,22 @@ export function VideoPlayer({
       setIsBuffering(false);
     };
     const handleStalled = () => {
+      setIsBuffering(true);
+
+      if (isTvPlaybackRef.current) {
+        setFallbackNotice("Buffering — waiting for more torrent pieces...");
+        return;
+      }
+
       if (stalledTimeoutRef.current) clearTimeout(stalledTimeoutRef.current);
       stalledTimeoutRef.current = setTimeout(() => {
-        setStreamError("Stream stalled. No data is being received.");
-        setIsBuffering(false);
-      }, 120_000);
+        if (recoveryAttemptsRef.current < 3) {
+          recoverStream("Stream stalled. Attempting to resume...");
+        } else {
+          setStreamError("Stream stalled. No data is being received.");
+          setIsBuffering(false);
+        }
+      }, STALL_RECOVERY_MS);
     };
     const handleStalledRecovery = () => {
       if (stalledTimeoutRef.current) {
@@ -175,6 +297,19 @@ export function VideoPlayer({
         stalledTimeoutRef.current = null;
       }
       if (streamError) setStreamError(null);
+      if (!video.paused && video.currentTime > 0) {
+        setIsInitialStrictBuffering(false);
+      }
+    };
+    const handleUnexpectedEnd = () => {
+      const clipDuration = video.duration;
+      if (clipDuration && clipDuration - video.currentTime <= 1) {
+        return;
+      }
+      if (isTvPlaybackRef.current && isInitialStrictBuffering) return;
+      if (recoveryAttemptsRef.current < 3) {
+        recoverStream("Stream ended unexpectedly. Trying to resume...");
+      }
     };
 
     video.addEventListener("play", handlePlay);
@@ -189,6 +324,7 @@ export function VideoPlayer({
     video.addEventListener("error", handleError);
     video.addEventListener("stalled", handleStalled);
     video.addEventListener("progress", handleStalledRecovery);
+    video.addEventListener("ended", handleUnexpectedEnd);
 
     return () => {
       video.removeEventListener("play", handlePlay);
@@ -203,9 +339,46 @@ export function VideoPlayer({
       video.removeEventListener("error", handleError);
       video.removeEventListener("stalled", handleStalled);
       video.removeEventListener("progress", handleStalledRecovery);
+      video.removeEventListener("ended", handleUnexpectedEnd);
       if (stalledTimeoutRef.current) clearTimeout(stalledTimeoutRef.current);
     };
-  }, [streamError]);
+  }, [recoverStream, streamError, isInitialStrictBuffering]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const handleResumeSeek = () => {
+      if (pendingResumeTimeRef.current === null) return;
+      const resumeTime = pendingResumeTimeRef.current;
+      pendingResumeTimeRef.current = null;
+      const maxDuration = video.duration;
+      const target =
+        maxDuration && Number.isFinite(maxDuration)
+          ? Math.min(resumeTime, Math.max(maxDuration - 0.75, 0))
+          : resumeTime;
+      try {
+        if (!Number.isNaN(target)) {
+          video.currentTime = target;
+        }
+        if (video.paused && autoPlay) {
+          video.play().catch(() => {});
+        }
+      } catch (err) {
+        console.error("Failed to resume playback:", err);
+      }
+    };
+
+    video.addEventListener("loadedmetadata", handleResumeSeek);
+    video.addEventListener("canplay", handleResumeSeek);
+    video.addEventListener("loadeddata", handleResumeSeek);
+
+    return () => {
+      video.removeEventListener("loadedmetadata", handleResumeSeek);
+      video.removeEventListener("canplay", handleResumeSeek);
+      video.removeEventListener("loadeddata", handleResumeSeek);
+    };
+  }, [autoPlay]);
 
   // Fullscreen change handler (with vendor prefixes for VIDAA/WebKit)
   useEffect(() => {
@@ -325,6 +498,150 @@ export function VideoPlayer({
       return next;
     });
   }, [subtitles.length]);
+
+  function togglePlay() {
+    const video = videoRef.current;
+    if (!video) return;
+
+    if (video.paused) {
+      video.play();
+    } else {
+      video.pause();
+    }
+  }
+
+  function toggleMute() {
+    const video = videoRef.current;
+    if (!video) return;
+    video.muted = !video.muted;
+  }
+
+  async function toggleFullscreen() {
+    const container = containerRef.current;
+    const video = videoRef.current;
+    if (!container) return;
+
+    const doc = document as Document & {
+      webkitFullscreenElement?: Element;
+      mozFullScreenElement?: Element;
+      msFullscreenElement?: Element;
+      webkitExitFullscreen?: () => Promise<void>;
+      mozCancelFullScreen?: () => Promise<void>;
+      msExitFullscreen?: () => Promise<void>;
+    };
+
+    const isCurrentlyFullscreen = !!(
+      doc.fullscreenElement ||
+      doc.webkitFullscreenElement ||
+      doc.mozFullScreenElement ||
+      doc.msFullscreenElement
+    );
+
+    try {
+      if (isCurrentlyFullscreen) {
+        if (doc.exitFullscreen) {
+          await doc.exitFullscreen();
+        } else if (doc.webkitExitFullscreen) {
+          await doc.webkitExitFullscreen();
+        } else if (doc.mozCancelFullScreen) {
+          await doc.mozCancelFullScreen();
+        } else if (doc.msExitFullscreen) {
+          await doc.msExitFullscreen();
+        }
+        setIsFullscreen(false);
+      } else {
+        const elem = container as HTMLElement & {
+          webkitRequestFullscreen?: () => Promise<void>;
+          mozRequestFullScreen?: () => Promise<void>;
+          msRequestFullscreen?: () => Promise<void>;
+        };
+        const videoElem = video as HTMLVideoElement & {
+          webkitRequestFullscreen?: () => Promise<void>;
+          webkitEnterFullscreen?: () => Promise<void>;
+          mozRequestFullScreen?: () => Promise<void>;
+          msRequestFullscreen?: () => Promise<void>;
+        };
+
+        if (elem.requestFullscreen) {
+          await elem.requestFullscreen();
+        } else if (elem.webkitRequestFullscreen) {
+          await elem.webkitRequestFullscreen();
+        } else if (elem.mozRequestFullScreen) {
+          await elem.mozRequestFullScreen();
+        } else if (elem.msRequestFullscreen) {
+          await elem.msRequestFullscreen();
+        } else if (videoElem?.webkitEnterFullscreen) {
+          await videoElem.webkitEnterFullscreen();
+        } else if (videoElem?.webkitRequestFullscreen) {
+          await videoElem.webkitRequestFullscreen();
+        } else {
+          console.warn("Fullscreen not supported on this device");
+          return;
+        }
+        setIsFullscreen(true);
+      }
+    } catch (err) {
+      console.error("Fullscreen error:", err);
+    }
+  }
+
+  async function togglePiP() {
+    const video = videoRef.current;
+    if (!video) return;
+
+    try {
+      if (document.pictureInPictureElement) {
+        await document.exitPictureInPicture();
+      } else {
+        await video.requestPictureInPicture();
+      }
+    } catch (err) {
+      console.error("PiP error:", err);
+    }
+  }
+
+  function skip(seconds: number) {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const maxTime = video.duration || Infinity;
+    const newTime = Math.max(0, Math.min(video.currentTime + seconds, maxTime - 1));
+
+    setSkipIndicator({
+      side: seconds < 0 ? "left" : "right",
+      show: true,
+      seconds: Math.abs(seconds)
+    });
+    setTimeout(() => setSkipIndicator((prev) => ({ ...prev, show: false })), 800);
+
+    try {
+      video.currentTime = newTime;
+      if (video.paused) {
+        const playPromise = video.play();
+        if (playPromise !== undefined) {
+          playPromise.then(() => {
+            video.pause();
+            video.currentTime = newTime;
+          }).catch(() => {});
+        }
+      }
+      if ("fastSeek" in video && typeof video.fastSeek === "function") {
+        (video as HTMLVideoElement & { fastSeek: (time: number) => void }).fastSeek(newTime);
+      }
+      console.log(`Skip to ${newTime.toFixed(1)}s (was ${video.currentTime.toFixed(1)}s)`);
+    } catch (err) {
+      console.error("Seek error:", err);
+    }
+  }
+
+  function adjustVolume(delta: number) {
+    const video = videoRef.current;
+    if (!video) return;
+    video.volume = Math.max(0, Math.min(video.volume + delta, 1));
+    if (video.muted && delta > 0) {
+      video.muted = false;
+    }
+  }
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     // Ignore if typing in input
@@ -530,21 +847,22 @@ export function VideoPlayer({
     }
   };
 
+  const runGuardedAction = useCallback((action: () => void) => {
+    const now = Date.now();
+    if (now - lastActionTime < 300) return;
+    setLastActionTime(now);
+    action();
+  }, [lastActionTime]);
+
   // TV pointer helper - handles all possible click events from TV remotes
   // Uses a time guard to prevent double-firing (e.g. D-pad OK fires both keydown + synthesized click)
   const handleTVClick = (action: () => void) => {
-    const guardedAction = () => {
-      const now = Date.now();
-      if (now - lastActionTimeRef.current < 300) return;
-      lastActionTimeRef.current = now;
-      action();
-    };
     return {
-      onClick: (e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); guardedAction(); },
+      onClick: (e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); runGuardedAction(action); },
       onMouseDown: (e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); },
-      onMouseUp: (e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); guardedAction(); },
-      onTouchEnd: (e: React.TouchEvent) => { e.preventDefault(); e.stopPropagation(); guardedAction(); },
-      onKeyDown: handleTVKeyDown(guardedAction),
+      onMouseUp: (e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); runGuardedAction(action); },
+      onTouchEnd: (e: React.TouchEvent) => { e.preventDefault(); e.stopPropagation(); runGuardedAction(action); },
+      onKeyDown: handleTVKeyDown(() => runGuardedAction(action)),
     };
   };
 
@@ -575,153 +893,6 @@ export function VideoPlayer({
     };
   }, []);
 
-  const togglePlay = () => {
-    const video = videoRef.current;
-    if (!video) return;
-
-    if (video.paused) {
-      video.play();
-    } else {
-      video.pause();
-    }
-  };
-
-  const toggleMute = () => {
-    const video = videoRef.current;
-    if (!video) return;
-    video.muted = !video.muted;
-  };
-
-  const toggleFullscreen = async () => {
-    const container = containerRef.current;
-    const video = videoRef.current;
-    if (!container) return;
-
-    // Check current fullscreen state (with vendor prefixes for VIDAA/WebKit)
-    const doc = document as Document & {
-      webkitFullscreenElement?: Element;
-      mozFullScreenElement?: Element;
-      msFullscreenElement?: Element;
-      webkitExitFullscreen?: () => Promise<void>;
-      mozCancelFullScreen?: () => Promise<void>;
-      msExitFullscreen?: () => Promise<void>;
-    };
-
-    const isCurrentlyFullscreen = !!(
-      doc.fullscreenElement ||
-      doc.webkitFullscreenElement ||
-      doc.mozFullScreenElement ||
-      doc.msFullscreenElement
-    );
-
-    try {
-      if (isCurrentlyFullscreen) {
-        // Exit fullscreen with vendor prefix fallbacks
-        if (doc.exitFullscreen) {
-          await doc.exitFullscreen();
-        } else if (doc.webkitExitFullscreen) {
-          await doc.webkitExitFullscreen();
-        } else if (doc.mozCancelFullScreen) {
-          await doc.mozCancelFullScreen();
-        } else if (doc.msExitFullscreen) {
-          await doc.msExitFullscreen();
-        }
-        setIsFullscreen(false);
-      } else {
-        // Enter fullscreen with vendor prefix fallbacks
-        const elem = container as HTMLElement & {
-          webkitRequestFullscreen?: () => Promise<void>;
-          mozRequestFullScreen?: () => Promise<void>;
-          msRequestFullscreen?: () => Promise<void>;
-        };
-        const videoElem = video as HTMLVideoElement & {
-          webkitRequestFullscreen?: () => Promise<void>;
-          webkitEnterFullscreen?: () => Promise<void>;
-          mozRequestFullScreen?: () => Promise<void>;
-          msRequestFullscreen?: () => Promise<void>;
-        };
-
-        if (elem.requestFullscreen) {
-          await elem.requestFullscreen();
-        } else if (elem.webkitRequestFullscreen) {
-          await elem.webkitRequestFullscreen();
-        } else if (elem.mozRequestFullScreen) {
-          await elem.mozRequestFullScreen();
-        } else if (elem.msRequestFullscreen) {
-          await elem.msRequestFullscreen();
-        } else if (videoElem?.webkitEnterFullscreen) {
-          // iOS/some TVs only support fullscreen on video element
-          await videoElem.webkitEnterFullscreen();
-        } else if (videoElem?.webkitRequestFullscreen) {
-          await videoElem.webkitRequestFullscreen();
-        } else {
-          console.warn("Fullscreen not supported on this device");
-          return;
-        }
-        setIsFullscreen(true);
-      }
-    } catch (err) {
-      console.error("Fullscreen error:", err);
-    }
-  };
-
-  const togglePiP = async () => {
-    const video = videoRef.current;
-    if (!video) return;
-
-    try {
-      if (document.pictureInPictureElement) {
-        await document.exitPictureInPicture();
-      } else {
-        await video.requestPictureInPicture();
-      }
-    } catch (err) {
-      console.error("PiP error:", err);
-    }
-  };
-
-  const skip = (seconds: number) => {
-    const video = videoRef.current;
-    if (!video) return;
-
-    const maxTime = video.duration || Infinity;
-    const newTime = Math.max(0, Math.min(video.currentTime + seconds, maxTime - 1));
-
-    // Show skip feedback indicator
-    setSkipIndicator({
-      side: seconds < 0 ? "left" : "right",
-      show: true,
-      seconds: Math.abs(seconds)
-    });
-    setTimeout(() => setSkipIndicator(prev => ({ ...prev, show: false })), 800);
-
-    // Try multiple methods to seek (TV browsers can be finicky)
-    try {
-      // Method 1: Direct assignment
-      video.currentTime = newTime;
-
-      // Method 2: If video is paused, also try play/pause cycle to force update
-      if (video.paused) {
-        const playPromise = video.play();
-        if (playPromise !== undefined) {
-          playPromise.then(() => {
-            video.pause();
-            video.currentTime = newTime;
-          }).catch(() => {});
-        }
-      }
-
-      // Method 3: Use fastSeek if available (some TV browsers support this)
-      if ('fastSeek' in video && typeof video.fastSeek === 'function') {
-        (video as HTMLVideoElement & { fastSeek: (time: number) => void }).fastSeek(newTime);
-      }
-
-      console.log(`Skip to ${newTime.toFixed(1)}s (was ${video.currentTime.toFixed(1)}s)`);
-    } catch (err) {
-      console.error('Seek error:', err);
-    }
-  };
-
   // Double-tap to skip (TV/touch friendly)
   const handleVideoTap = (e: React.MouseEvent) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -747,15 +918,6 @@ export function VideoPlayer({
           togglePlay();
         }
       }, 300);
-    }
-  };
-
-  const adjustVolume = (delta: number) => {
-    const video = videoRef.current;
-    if (!video) return;
-    video.volume = Math.max(0, Math.min(video.volume + delta, 1));
-    if (video.muted && delta > 0) {
-      video.muted = false;
     }
   };
 
@@ -800,10 +962,25 @@ export function VideoPlayer({
       }}
       onKeyDown={(e) => handleKeyDown(e.nativeEvent)}
     >
+      {isUsingFallbackStream && (
+        <div className="absolute top-5 right-5 z-20 flex items-center gap-2 rounded-full bg-zinc-900/70 px-4 py-2 text-xs font-medium text-white backdrop-blur">
+          <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
+          <span>Fallback stream</span>
+        </div>
+      )}
+
+      {fallbackNotice && (
+        <div className="pointer-events-none absolute bottom-28 left-1/2 z-20 -translate-x-1/2">
+          <div className="rounded-full bg-black/70 px-4 py-2 text-sm text-white shadow-lg">
+            {fallbackNotice}
+          </div>
+        </div>
+      )}
+
       {/* Video */}
       <video
         ref={videoRef}
-        src={src}
+        src={resolvedSrc}
         className="w-full h-full"
         autoPlay={autoPlay}
         playsInline
@@ -871,9 +1048,12 @@ export function VideoPlayer({
               <Button
                 variant="outline"
                 onClick={() => {
+                  const resumeTime = videoRef.current?.currentTime || 0;
+                  pendingResumeTimeRef.current = resumeTime;
+                  recoveryAttemptsRef.current = 0;
                   setStreamError(null);
                   setIsBuffering(true);
-                  videoRef.current?.load();
+                  setSrcRevision((rev) => rev + 1);
                 }}
               >
                 Retry
@@ -889,12 +1069,26 @@ export function VideoPlayer({
       )}
 
       {/* Buffering overlay */}
-      {isBuffering && !streamError && (
+      {isBuffering && !streamError && !isInitialStrictBuffering && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/50">
           <div className="flex flex-col items-center gap-3">
             <Loader2 className="h-12 w-12 text-white animate-spin" />
             <p className="text-sm text-zinc-400">
               Buffering... {Math.round((buffered / duration) * 100) || 0}%
+            </p>
+          </div>
+        </div>
+      )}
+
+      {isInitialStrictBuffering && !streamError && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/70 z-30">
+          <div className="flex flex-col items-center gap-3 text-center px-6">
+            <Loader2 className="h-12 w-12 text-white animate-spin" />
+            <p className="text-base text-white font-medium">Preparing stream…</p>
+            <p className="text-sm text-zinc-300">
+              Strict buffering is enabled. We&apos;re caching
+              {strictBufferSizeMB ? ` ~${strictBufferSizeMB}MB` : " the full buffer"} before playback
+              starts to avoid stalls on your TV.
             </p>
           </div>
         </div>
@@ -1220,3 +1414,4 @@ export function VideoPlayer({
     </div>
   );
 }
+/* eslint-enable react-hooks/refs */
