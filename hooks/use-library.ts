@@ -1,15 +1,32 @@
 "use client";
 
-import useSWR from "swr";
+import { useState, useEffect, useCallback } from "react";
 import type { LibraryItem, LibraryData } from "@/types";
 
-const fetcher = (url: string) => fetch(url).then((res) => res.json());
-
 export function useLibrary() {
-  const { data, error, isLoading, mutate } = useSWR<LibraryData>(
-    "/api/library",
-    fetcher
-  );
+  const [data, setData] = useState<LibraryData | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch("/api/library");
+      if (!res.ok) throw new Error("Failed to fetch library");
+      const json: LibraryData = await res.json();
+      setData(json);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e : new Error(String(e)));
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const mutate = useCallback(() => load(), [load]);
 
   const addItem = async (item: {
     name: string;

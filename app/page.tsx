@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, Suspense } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { FilePicker } from "@/components/file-picker";
 import { MagnetInput } from "@/components/magnet-input";
@@ -29,26 +29,7 @@ import { Input } from "@/components/ui/input";
 import type { LibraryItem } from "@/types";
 
 export default function HomePage() {
-  return (
-    <Suspense fallback={<HomePageLoading />}>
-      <HomePageContent />
-    </Suspense>
-  );
-}
-
-function HomePageLoading() {
-  return (
-    <main className="min-h-screen pt-14">
-      <div className="flex justify-center py-24">
-        <Loader2 className="h-8 w-8 animate-spin text-zinc-500" />
-      </div>
-    </main>
-  );
-}
-
-function HomePageContent() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const { items, isLoading: libraryLoading, addItem, deleteItem } = useLibrary();
 
   // File picker state

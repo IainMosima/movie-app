@@ -26,6 +26,8 @@ export default function WatchPage({ params }: WatchPageProps) {
   const hasStartedRef = useRef(false);
   const [subtitles, setSubtitles] = useState<{ label: string; src: string }[]>([]);
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
+  const [aacStreamUrl, setAacStreamUrl] = useState<string | null>(null);
+  const [useAacStream, setUseAacStream] = useState(false);
   const [peersReady, setPeersReady] = useState(false);
   const [peers, setPeers] = useState(0);
   const [dlSpeed, setDlSpeed] = useState(0);
@@ -45,7 +47,9 @@ export default function WatchPage({ params }: WatchPageProps) {
           const filePart = fileIndex ? `?file=${fileIndex}` : "";
           const isSecure = window.location.protocol === "https:";
           if (!isSecure) {
-            setStreamUrl(`http://${host}:${port}/stream/${infoHash}${filePart}`);
+            const workerBase = `http://${host}:${port}`;
+            setStreamUrl(`${workerBase}/stream/${infoHash}${filePart}`);
+            setAacStreamUrl(`${workerBase}/stream-aac/${infoHash}${filePart}`);
           }
         }
       } catch {
@@ -139,6 +143,21 @@ export default function WatchPage({ params }: WatchPageProps) {
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [infoHash]);
 
+  // Probe audio codec — switch to AAC-transcoded stream if unsupported (EAC3/AC3/DTS)
+  useEffect(() => {
+    if (!aacStreamUrl) return;
+    const probeUrl = aacStreamUrl.replace("/stream-aac/", "/probe/");
+    fetch(probeUrl)
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (data && !data.audioSupported) {
+          console.log(`Unsupported audio codec: ${data.audioCodec} — switching to AAC stream`);
+          setUseAacStream(true);
+        }
+      })
+      .catch(() => {});
+  }, [aacStreamUrl]);
+
   // Fetch subtitle tracks
   useEffect(() => {
     const fetchSubtitles = async () => {
@@ -192,14 +211,17 @@ export default function WatchPage({ params }: WatchPageProps) {
     );
   }
 
+  const activeStreamUrl = useAacStream && aacStreamUrl ? aacStreamUrl : streamUrl!;
+
   return (
     <div className="fixed inset-0 bg-black z-50">
       <VideoPlayer
-        src={streamUrl}
+        src={activeStreamUrl}
         title={title}
         onClose={handleClose}
         autoPlay
         subtitles={subtitles}
+        seekRestartBase={useAacStream && aacStreamUrl ? aacStreamUrl : undefined}
       />
     </div>
   );

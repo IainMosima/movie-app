@@ -33,6 +33,8 @@ interface VideoPlayerProps {
   subtitles?: { label: string; src: string }[];
   strictPrebuffering?: boolean;
   strictBufferSizeMB?: number;
+  /** When set, seeking restarts the stream at ?t=N instead of using Range requests */
+  seekRestartBase?: string;
 }
 
 const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
@@ -47,6 +49,7 @@ export function VideoPlayer({
   subtitles = [],
   strictPrebuffering = false,
   strictBufferSizeMB,
+  seekRestartBase,
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -73,6 +76,7 @@ export function VideoPlayer({
   const [prefersAlwaysOnControls, setPrefersAlwaysOnControls] = useState(false);
   const isTvPlaybackRef = useRef(false);
   const [streamError, setStreamError] = useState<string | null>(null);
+  const [mutedByAutoplay, setMutedByAutoplay] = useState(false);
   const [playbackSrc, setPlaybackSrc] = useState(src);
   const [isUsingFallbackStream, setIsUsingFallbackStream] = useState(false);
   const [fallbackNotice, setFallbackNotice] = useState<string | null>(null);
@@ -105,7 +109,13 @@ export function VideoPlayer({
     if (autoPlay) {
       const playPromise = video.play();
       if (playPromise !== undefined) {
-        playPromise.catch(() => {});
+        playPromise.catch(() => {
+          // Autoplay with sound blocked by browser — retry muted
+          video.muted = true;
+          setIsMuted(true);
+          setMutedByAutoplay(true);
+          video.play().catch(() => {});
+        });
       }
     }
   }, [playbackSrc, autoPlay]);
@@ -344,6 +354,33 @@ export function VideoPlayer({
     };
   }, [recoverStream, streamError, isInitialStrictBuffering]);
 
+  // Seek-restart mode: when seekRestartBase is set, intercept seeks and restart ffmpeg at the right position
+  const seekRestartBaseRef = useRef(seekRestartBase);
+  useEffect(() => { seekRestartBaseRef.current = seekRestartBase; }, [seekRestartBase]);
+
+  useEffect(() => {
+    if (!seekRestartBase) return;
+    const video = videoRef.current;
+    if (!video) return;
+
+    const handleSeeking = () => {
+      const base = seekRestartBaseRef.current;
+      if (!base) return;
+      const t = Math.floor(video.currentTime);
+      const sep = base.includes("?") ? "&" : "?";
+      const newSrc = `${base}${sep}t=${t}`;
+      // Only restart if the seek target differs from current stream start
+      if (video.src !== newSrc) {
+        video.src = newSrc;
+        video.load();
+        video.play().catch(() => {});
+      }
+    };
+
+    video.addEventListener("seeking", handleSeeking);
+    return () => video.removeEventListener("seeking", handleSeeking);
+  }, [seekRestartBase]);
+
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -514,6 +551,7 @@ export function VideoPlayer({
     const video = videoRef.current;
     if (!video) return;
     video.muted = !video.muted;
+    setMutedByAutoplay(false);
   }
 
   async function toggleFullscreen() {
@@ -975,6 +1013,23 @@ export function VideoPlayer({
             {fallbackNotice}
           </div>
         </div>
+      )}
+
+      {/* Muted-by-autoplay notice */}
+      {mutedByAutoplay && isMuted && (
+        <button
+          className="absolute top-5 left-1/2 z-20 -translate-x-1/2 flex items-center gap-2 rounded-full bg-black/80 px-5 py-2.5 text-sm font-medium text-white backdrop-blur hover:bg-black/90 transition-colors"
+          onClick={() => {
+            const video = videoRef.current;
+            if (!video) return;
+            video.muted = false;
+            setIsMuted(false);
+            setMutedByAutoplay(false);
+          }}
+        >
+          <VolumeX className="h-4 w-4 text-amber-400" />
+          <span>Muted — click to unmute</span>
+        </button>
       )}
 
       {/* Video */}
