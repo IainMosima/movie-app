@@ -1,0 +1,13 @@
+services:
+  movie-app:
+    build: .
+    image: movie-app:latest
+    container_name: movie-app
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+    environment:
+      - NODE_ENV=production
+      - HOSTNAME=0.0.0.0
+      - PORT=8181

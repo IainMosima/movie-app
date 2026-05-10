@@ -84,6 +84,7 @@ export interface LibraryItem {
   addedAt: number;
   quality?: string;
   size?: string;
+  fileIndex?: number;
 }
 
 export interface LibraryData {

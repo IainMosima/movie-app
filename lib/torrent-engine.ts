@@ -63,27 +63,35 @@ class TorrentEngine {
   // --- Public API (matches the old TorrentEngine interface) ---
 
   async addTorrent(magnet: string): Promise<TorrentInfo> {
-    const res = await this.request("/add", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ magnet }),
-    });
+    // Outer retry loop handles .torrent URLs that need time to download and resolve
+    for (let attempt = 0; attempt < 60; attempt++) {
+      const res = await this.request("/add", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ magnet }),
+      });
 
-    const data = await res.json();
+      const data = await res.json();
 
-    // If torrent is already ready, return immediately
-    if (res.status === 200) return data;
+      // Ready immediately
+      if (res.status === 200) return data;
 
-    // 202 = loading. Poll until ready (up to 60s)
-    const infoHash = data.infoHash;
-    if (!infoHash) throw new Error("No infoHash returned");
+      // 202 with infoHash = torrent is loading, poll by hash
+      if (data.infoHash) {
+        for (let i = 0; i < 60; i++) {
+          await new Promise((r) => setTimeout(r, 1000));
+          const statusRes = await this.request(`/torrent/${data.infoHash}`);
+          if (statusRes.ok) {
+            const info = await statusRes.json();
+            if (info.ready) return info;
+          }
+        }
+        throw new Error("Torrent metadata timeout");
+      }
 
-    for (let i = 0; i < 60; i++) {
-      await new Promise((r) => setTimeout(r, 1000));
-      const statusRes = await this.request(`/torrent/${infoHash}`);
-      if (statusRes.ok) {
-        const info = await statusRes.json();
-        if (info.ready) return info;
+      // No infoHash yet — .torrent URL may still be downloading/resolving, retry
+      if (attempt < 59) {
+        await new Promise((r) => setTimeout(r, 1000));
       }
     }
 

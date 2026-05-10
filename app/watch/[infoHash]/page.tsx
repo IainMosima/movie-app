@@ -28,6 +28,8 @@ export default function WatchPage({ params }: WatchPageProps) {
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
   const [aacStreamUrl, setAacStreamUrl] = useState<string | null>(null);
   const [useAacStream, setUseAacStream] = useState(false);
+  const [probedDuration, setProbedDuration] = useState<number | null>(null);
+  const [probeComplete, setProbeComplete] = useState(false);
   const [peersReady, setPeersReady] = useState(false);
   const [peers, setPeers] = useState(0);
   const [dlSpeed, setDlSpeed] = useState(0);
@@ -143,19 +145,65 @@ export default function WatchPage({ params }: WatchPageProps) {
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [infoHash]);
 
-  // Probe audio codec — switch to AAC-transcoded stream if unsupported (EAC3/AC3/DTS)
+  // Probe container/codec — route to AAC-transcoded stream unless positive proof it works natively.
+  // Retries in the background until we get a real durationSec (MKV header may not be on disk on first try).
   useEffect(() => {
-    if (!aacStreamUrl) return;
+    if (!aacStreamUrl) {
+      setProbeComplete(true);
+      return;
+    }
     const probeUrl = aacStreamUrl.replace("/stream-aac/", "/probe/");
-    fetch(probeUrl)
-      .then((r) => r.ok ? r.json() : null)
-      .then((data) => {
-        if (data && !data.audioSupported) {
-          console.log(`Unsupported audio codec: ${data.audioCodec} — switching to AAC stream`);
+    let cancelled = false;
+    let attempt = 0;
+    const maxAttempts = 15;
+
+    const runProbe = async () => {
+      try {
+        const r = await fetch(probeUrl);
+        const data = r.ok ? await r.json() : null;
+        if (cancelled) return;
+
+        if (!data) {
+          // Probe fetch returned non-OK — safe default is transcode.
+          setUseAacStream(true);
+          setProbeComplete(true);
+          return;
+        }
+
+        // Decide routing on first response
+        if (attempt === 0 && !data.useDirectStream) {
+          console.log(`Routing to AAC transcode: ${data.reason}`);
           setUseAacStream(true);
         }
-      })
-      .catch(() => {});
+
+        if (data.durationSec && data.durationSec > 0) {
+          setProbedDuration(data.durationSec);
+          setProbeComplete(true);
+          return;
+        }
+
+        // No duration yet — let the player start (can't gate forever), and retry in the background
+        setProbeComplete(true);
+        attempt += 1;
+        if (attempt < maxAttempts) {
+          setTimeout(runProbe, 2000);
+        } else {
+          console.warn("Probe never returned a duration after retries");
+        }
+      } catch {
+        if (cancelled) return;
+        // Network error — safe default is transcode, but keep retrying for duration
+        setUseAacStream(true);
+        setProbeComplete(true);
+        attempt += 1;
+        if (attempt < maxAttempts) setTimeout(runProbe, 2000);
+      }
+    };
+
+    runProbe();
+    return () => {
+      cancelled = true;
+    };
   }, [aacStreamUrl]);
 
   // Fetch subtitle tracks
@@ -188,8 +236,8 @@ export default function WatchPage({ params }: WatchPageProps) {
     router.push("/");
   }, [router]);
 
-  // Show connecting screen until we have peers and a stream URL
-  if (!peersReady || !streamUrl) {
+  // Show connecting screen until we have peers, a stream URL, and probe has completed
+  if (!peersReady || !streamUrl || !probeComplete) {
     return (
       <div className="fixed inset-0 bg-black z-50 flex items-center justify-center">
         <div className="flex flex-col items-center gap-5 max-w-sm w-full px-8">
@@ -203,9 +251,21 @@ export default function WatchPage({ params }: WatchPageProps) {
               <p className="text-xs text-zinc-600 mt-1">{formatSpeed(dlSpeed)}</p>
             )}
           </div>
-          <Button variant="ghost" size="sm" onClick={handleClose} className="text-zinc-500">
-            Go back
-          </Button>
+          <div className="flex gap-3">
+            {streamUrl && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => window.open(`vlc://${streamUrl}`, "_blank")}
+                className="text-zinc-500"
+              >
+                Open in VLC
+              </Button>
+            )}
+            <Button variant="ghost" size="sm" onClick={handleClose} className="text-zinc-500">
+              Go back
+            </Button>
+          </div>
         </div>
       </div>
     );
@@ -222,6 +282,8 @@ export default function WatchPage({ params }: WatchPageProps) {
         autoPlay
         subtitles={subtitles}
         seekRestartBase={useAacStream && aacStreamUrl ? aacStreamUrl : undefined}
+        fallbackDuration={useAacStream ? (probedDuration ?? undefined) : undefined}
+        rawStreamUrl={streamUrl ?? undefined}
       />
     </div>
   );

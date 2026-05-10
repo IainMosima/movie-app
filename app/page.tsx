@@ -44,6 +44,10 @@ export default function HomePage() {
   const [isAdding, setIsAdding] = useState(false);
 
   const [isLoadingPlay, setIsLoadingPlay] = useState(false);
+  const [vlcUrl, setVlcUrl] = useState<string | null>(null);
+  const [vlcCopied, setVlcCopied] = useState(false);
+  // When VLC mode is active, file picker uses this callback instead of navigating
+  const [vlcPickerCallback, setVlcPickerCallback] = useState<((fileIndex: number) => void) | null>(null);
 
   // Handle returning from watch page - check localStorage for last show
   useEffect(() => {
@@ -118,18 +122,74 @@ export default function HomePage() {
     handlePlayMagnet(magnet, title, { forcePicker: true });
   };
 
+  const handleVLC = async (magnet: string, title?: string) => {
+    if (!title) title = extractTitleFromInput(magnet);
+    setIsLoadingPlay(true);
+    try {
+      const [filesRes, portRes] = await Promise.all([
+        fetch("/api/torrent/files", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ magnet }),
+        }),
+        fetch("/api/worker-port"),
+      ]);
+      if (!filesRes.ok) throw new Error("Failed to load torrent");
+      const data = await filesRes.json();
+      const { port } = await portRes.json();
+      const host = window.location.hostname;
+      const buildUrl = (fileIndex: number) =>
+        `http://${host}:${port}/stream/${data.infoHash}?file=${fileIndex}`;
+      const videoFiles = data.files.filter((f: { isVideo: boolean }) => f.isVideo);
+
+      if (videoFiles.length <= 1) {
+        setVlcUrl(buildUrl(data.mainVideoIndex ?? 0));
+      } else {
+        // Multi-file: open picker, then show URL for chosen file
+        setSelectedMagnet(magnet);
+        setSelectedTitle(title ?? "");
+        setVlcPickerCallback(() => (fileIndex: number) => {
+          setVlcUrl(buildUrl(fileIndex));
+          setVlcPickerCallback(null);
+        });
+        setPickerOpen(true);
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to load");
+    } finally {
+      setIsLoadingPlay(false);
+    }
+  };
+
   const handleSelectFile = (
     infoHash: string,
     fileIndex: number,
     fileName: string
   ) => {
+    setPickerOpen(false);
+
+    // VLC mode: show URL popup instead of navigating
+    if (vlcPickerCallback) {
+      vlcPickerCallback(fileIndex);
+      return;
+    }
+
+    // Persist chosen episode index to the library item
+    const libItem = items.find((i: LibraryItem) => i.magnet === selectedMagnet);
+    if (libItem) {
+      fetch(`/api/library/${libItem.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileIndex }),
+      }).catch(() => {});
+    }
+
     // Save current show to localStorage for back navigation
     localStorage.setItem("lastShow", JSON.stringify({
       magnet: selectedMagnet,
       title: selectedTitle || fileName,
     }));
 
-    setPickerOpen(false);
     const title = selectedTitle || fileName;
     router.push(
       `/watch/${infoHash}?title=${encodeURIComponent(title)}&file=${fileIndex}`
@@ -178,6 +238,45 @@ export default function HomePage() {
           <div className="flex flex-col items-center gap-4">
             <Loader2 className="h-12 w-12 animate-spin text-purple-500" />
             <p className="text-zinc-300">Loading...</p>
+          </div>
+        </div>
+      )}
+
+      {/* VLC stream URL popup */}
+      {vlcUrl && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center px-4" onClick={() => setVlcUrl(null)}>
+          <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 max-w-lg w-full shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-base font-semibold text-white">Stream URL</h2>
+              <button onClick={() => { setVlcUrl(null); setVlcCopied(false); }} className="text-zinc-500 hover:text-white transition-colors text-lg leading-none">✕</button>
+            </div>
+            <p className="text-xs text-zinc-500 mb-3">Paste this into VLC → Media → Open Network Stream</p>
+            <div
+              className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-3 font-mono text-xs text-zinc-300 break-all cursor-pointer hover:border-zinc-500 transition-colors mb-4"
+              onClick={() => {
+                navigator.clipboard.writeText(vlcUrl);
+                setVlcCopied(true);
+                setTimeout(() => setVlcCopied(false), 2000);
+              }}
+              title="Click to copy"
+            >
+              {vlcUrl}
+            </div>
+            <div className="flex gap-2">
+              <Button
+                className="flex-1"
+                onClick={() => {
+                  navigator.clipboard.writeText(vlcUrl);
+                  setVlcCopied(true);
+                  setTimeout(() => setVlcCopied(false), 2000);
+                }}
+              >
+                {vlcCopied ? "Copied!" : "Copy URL"}
+              </Button>
+              <Button variant="outline" className="border-zinc-700" onClick={() => { setVlcUrl(null); setVlcCopied(false); }}>
+                Close
+              </Button>
+            </div>
           </div>
         </div>
       )}
@@ -301,6 +400,7 @@ export default function HomePage() {
                   onPlay={() => handlePlayMagnet(item.magnet, item.name)}
                   onOpen={() => handleOpenListing(item.magnet, item.name)}
                   onDelete={() => handleDelete(item.id, item.name)}
+                  onVLC={() => handleVLC(item.magnet, item.name)}
                 />
               ))}
             </div>
@@ -327,11 +427,13 @@ function LibraryCard({
   onPlay,
   onOpen,
   onDelete,
+  onVLC,
 }: {
   item: LibraryItem;
   onPlay: () => void;
   onOpen: () => void;
   onDelete: () => void;
+  onVLC: () => void;
 }) {
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -372,6 +474,14 @@ function LibraryCard({
             {item.quality}
           </Badge>
         )}
+
+        <button
+          onClick={(e) => { e.stopPropagation(); onVLC(); }}
+          className="shrink-0 text-xs font-medium text-zinc-500 hover:text-orange-400 opacity-0 group-hover:opacity-100 transition-all px-2 py-1 rounded hover:bg-orange-500/10"
+          title="Get stream URL for VLC"
+        >
+          VLC
+        </button>
 
         <Button
           size="icon"
