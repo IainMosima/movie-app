@@ -488,7 +488,7 @@ function LibraryCard({
           variant="ghost"
           onClick={handleDelete}
           disabled={isDeleting}
-          className="h-8 w-8 text-zinc-600 hover:text-red-400 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+          className="h-8 w-8 text-zinc-600 hover:text-red-400 shrink-0 transition-colors"
         >
           {isDeleting ? (
             <Loader2 className="h-4 w-4 animate-spin" />

@@ -211,7 +211,9 @@ export function FilePicker({
     return File;
   };
 
-  const videoFiles = files.filter((f) => f.isVideo);
+  const videoFiles = files
+    .filter((f) => f.isVideo)
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
   const otherFiles = files.filter((f) => !f.isVideo);
 
   return (
