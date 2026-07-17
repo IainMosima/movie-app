@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getItemById, updateItem, deleteItem } from "@/lib/library-store";
+import { extractInfoHashFromMagnet, deleteFromWorker } from "@/lib/torrent-cache-actions";
+import { deleteCacheForLibraryItem } from "@/lib/storage-store";
 
 const UpdateItemSchema = z.object({
   name: z.string().min(1).optional(),
@@ -8,25 +10,6 @@ const UpdateItemSchema = z.object({
   size: z.string().optional(),
   fileIndex: z.number().int().nonnegative().optional(),
 });
-
-function extractInfoHash(magnet: string): string | null {
-  // Standard magnet URI
-  const m = magnet.match(/[?&]xt=urn:btih:([a-fA-F0-9]{40}|[a-zA-Z2-7]{32})/i);
-  if (m) return m[1].toLowerCase();
-  return null;
-}
-
-async function deleteFromWorker(infoHash: string, itemName?: string): Promise<void> {
-  try {
-    const portRes = await fetch("http://localhost:8181/api/worker-port");
-    if (!portRes.ok) return;
-    const { port } = await portRes.json();
-    const nameParam = itemName ? `?name=${encodeURIComponent(itemName)}` : "";
-    await fetch(`http://localhost:${port}/torrent/${infoHash}${nameParam}`, { method: "DELETE" });
-  } catch {
-    // Worker may not be running — files already gone or will be cleaned up
-  }
-}
 
 // GET /api/library/[id] - Get single item
 export async function GET(
@@ -96,9 +79,17 @@ export async function DELETE(
     }
 
     // Extract infoHash and tell the worker to destroy cached files
-    const infoHash = extractInfoHash(item.magnet);
+    const infoHash = extractInfoHashFromMagnet(item.magnet);
     if (infoHash) {
       await deleteFromWorker(infoHash, item.name);
+    }
+
+    // Filesystem fallback: remove cache folder even if the worker isn't running.
+    // Must run before deleteItem so reconcile can still match this item.
+    try {
+      deleteCacheForLibraryItem(id);
+    } catch (e) {
+      console.error("Cache fs-fallback failed:", e);
     }
 
     const deleted = deleteItem(id);

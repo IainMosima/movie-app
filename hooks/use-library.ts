@@ -69,6 +69,11 @@ export function useLibrary() {
     await mutate();
   };
 
+  const clearItemCache = async (id: string) => {
+    const res = await fetch(`/api/library/${id}/cache`, { method: "DELETE" });
+    if (!res.ok) throw new Error("Failed to clear cache");
+  };
+
   return {
     items: data?.items || [],
     isLoading,
@@ -76,6 +81,7 @@ export function useLibrary() {
     addItem,
     updateItem,
     deleteItem,
+    clearItemCache,
     refresh: mutate,
   };
 }

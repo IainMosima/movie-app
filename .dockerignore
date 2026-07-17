@@ -4,6 +4,7 @@ node_modules
 .next
 data/cache
 data/*.json
+.active-data-dir
 .env*
 *.tsbuildinfo
 .DS_Store

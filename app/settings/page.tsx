@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Loader2, RotateCcw, Save } from "lucide-react";
 import { useSettings } from "@/hooks/use-settings";
+import { DataDirPicker } from "@/components/data-dir-picker";
 
 export default function SettingsPage() {
   const { settings, isLoading, updateSettings, resetSettings } = useSettings();
@@ -91,6 +92,9 @@ export default function SettingsPage() {
 
         {/* Settings form */}
         <div className="space-y-6">
+          {/* Data directory */}
+          <DataDirPicker />
+
           {/* Connection settings */}
           <Card className="p-6 bg-zinc-900/50 border-zinc-800">
             <h2 className="font-semibold mb-4">Connection</h2>

@@ -1,28 +1,32 @@
 import "server-only";
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
+import { getDataDir } from "@/lib/data-dir";
 import type { Source, SourcesData } from "@/types";
 
-const DATA_PATH = join(process.cwd(), "data", "sources.json");
+function getSourcesPath(): string {
+  return join(getDataDir(), "sources.json");
+}
 
-function ensureDataFile(): void {
-  if (!existsSync(DATA_PATH)) {
+function ensureDataFile(path: string): void {
+  if (!existsSync(path)) {
     const initial: SourcesData = {
       activeSourceId: null,
       sources: [],
     };
-    writeFileSync(DATA_PATH, JSON.stringify(initial, null, 2));
+    writeFileSync(path, JSON.stringify(initial, null, 2));
   }
 }
 
 export function getSources(): SourcesData {
-  ensureDataFile();
-  const data = readFileSync(DATA_PATH, "utf-8");
+  const path = getSourcesPath();
+  ensureDataFile(path);
+  const data = readFileSync(path, "utf-8");
   return JSON.parse(data) as SourcesData;
 }
 
 function saveSources(data: SourcesData): void {
-  writeFileSync(DATA_PATH, JSON.stringify(data, null, 2));
+  writeFileSync(getSourcesPath(), JSON.stringify(data, null, 2));
 }
 
 export function getAllSources(): Source[] {

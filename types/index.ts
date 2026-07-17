@@ -90,3 +90,48 @@ export interface LibraryItem {
 export interface LibraryData {
   items: LibraryItem[];
 }
+
+// Storage management - on-disk cache reconciliation
+export type StorageEntryKind = "matched" | "orphan" | "subtitles" | "transcode";
+
+export interface StorageEntry {
+  name: string;
+  sizeBytes: number;
+  sizeFormatted: string;
+  kind: StorageEntryKind;
+  libraryItemId?: string;
+}
+
+export interface DiskSpace {
+  freeBytes: number;
+  totalBytes: number;
+  floorBytes: number;
+  belowFloor: boolean;
+}
+
+export interface StorageReport {
+  disk: DiskSpace;
+  cacheTotalBytes: number;
+  cacheTotalFormatted: string;
+  entries: StorageEntry[];
+}
+
+// Runtime-switchable data directory
+export interface DataDirReport {
+  activeDir: string;
+  mediaRoot: string;
+  freeBytes: number;
+  totalBytes: number;
+}
+
+export interface BrowseEntry {
+  name: string;
+  path: string;
+}
+
+export interface BrowseResponse {
+  path: string;
+  parent: string | null;
+  entries: BrowseEntry[];
+  error?: string;
+}

@@ -33,12 +33,8 @@ interface VideoPlayerProps {
   subtitles?: { label: string; src: string }[];
   strictPrebuffering?: boolean;
   strictBufferSizeMB?: number;
-  /** When set, seeking restarts the stream at ?t=N instead of using Range requests */
-  seekRestartBase?: string;
-  /** Fallback duration in seconds when video.duration is Infinity/NaN (fragmented streams) */
+  /** Fallback duration in seconds when video.duration is Infinity/NaN (MKV streams) */
   fallbackDuration?: number;
-  /** Raw direct stream URL (no transcode) for opening in VLC or copying to clipboard */
-  rawStreamUrl?: string;
 }
 
 const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
@@ -53,9 +49,7 @@ export function VideoPlayer({
   subtitles = [],
   strictPrebuffering = false,
   strictBufferSizeMB,
-  seekRestartBase,
   fallbackDuration,
-  rawStreamUrl,
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -72,8 +66,6 @@ export function VideoPlayer({
   const [isBuffering, setIsBuffering] = useState(true);
   const [buffered, setBuffered] = useState(0);
   const [playbackRate, setPlaybackRate] = useState(1);
-  const [audioOffsetMs, setAudioOffsetMs] = useState(0);
-  const [audioOffsetInput, setAudioOffsetInput] = useState("");
   const [isPiP, setIsPiP] = useState(false);
   const [activeSubtitleIndex, setActiveSubtitleIndex] = useState<number | null>(null);
   const [activeCueText, setActiveCueText] = useState<string | null>(null);
@@ -92,8 +84,6 @@ export function VideoPlayer({
   const pendingResumeTimeRef = useRef<number | null>(null);
   const recoveryAttemptsRef = useRef(0);
   const lastRecoveryAtRef = useRef(0);
-  // Tracks how far into the movie the current stream segment started (seek-restart mode)
-  const streamOffsetRef = useRef(0);
   const [isInitialStrictBuffering, setIsInitialStrictBuffering] = useState<boolean>(
     strictPrebuffering
   );
@@ -103,7 +93,6 @@ export function VideoPlayer({
     setIsUsingFallbackStream(false);
     setSrcRevision(0);
     pendingResumeTimeRef.current = null;
-    streamOffsetRef.current = 0;
     setBuffered(0);
   }, [src]);
 
@@ -170,31 +159,8 @@ export function VideoPlayer({
     [fallbackSrc, isUsingFallbackStream, playbackSrc]
   );
 
-  // Seek-restart mode: restart ffmpeg at an absolute movie position
-  const seekRestartBaseRef = useRef(seekRestartBase);
-  useEffect(() => { seekRestartBaseRef.current = seekRestartBase; }, [seekRestartBase]);
-  const audioOffsetMsRef = useRef(audioOffsetMs);
-  useEffect(() => { audioOffsetMsRef.current = audioOffsetMs; }, [audioOffsetMs]);
   const fallbackDurationRef = useRef(fallbackDuration);
   useEffect(() => { fallbackDurationRef.current = fallbackDuration; }, [fallbackDuration]);
-
-  const restartAt = useCallback((absSeconds: number) => {
-    const base = seekRestartBaseRef.current;
-    const video = videoRef.current;
-    if (!base || !video) return;
-    const t = Math.floor(Math.max(0, absSeconds));
-    const sep = base.includes("?") ? "&" : "?";
-    const aoParam = audioOffsetMsRef.current !== 0 ? `&ao=${audioOffsetMsRef.current}` : "";
-    // Pass duration so the worker can estimate byte position for piece availability checks
-    const durParam = fallbackDurationRef.current ? `&dur=${Math.ceil(fallbackDurationRef.current)}` : "";
-    video.src = `${base}${sep}t=${t}${aoParam}${durParam}`;
-    streamOffsetRef.current = t;
-    // Pre-seed UI state so progress bar doesn't flicker before first timeupdate/progress events
-    setCurrentTime(t);
-    setBuffered(t);
-    video.load();
-    video.play().catch(() => {});
-  }, []);
 
   const recoverStream = useCallback(
     (message: string) => {
@@ -210,15 +176,6 @@ export function VideoPlayer({
       setIsBuffering(true);
       setStreamError(null);
 
-      // Seek-restart mode: restart ffmpeg at the current absolute position, not from 0
-      if (seekRestartBaseRef.current) {
-        const absNow = streamOffsetRef.current + (Number.isFinite(video.currentTime) ? video.currentTime : 0);
-        setFallbackNotice(message);
-        restartAt(absNow);
-        return true;
-      }
-
-      // Direct stream mode: cache-bust and resume at segment time
       const resumeTime = video.currentTime || 0;
       pendingResumeTimeRef.current = resumeTime;
 
@@ -230,7 +187,7 @@ export function VideoPlayer({
       setSrcRevision((rev) => rev + 1);
       return true;
     },
-    [restartAt, trySwitchToFallback]
+    [trySwitchToFallback]
   );
 
   // Show controls on mouse move
@@ -312,7 +269,7 @@ export function VideoPlayer({
     const handlePause = () => setIsPlaying(false);
     const handleTimeUpdate = () => {
       const t = video.currentTime;
-      setCurrentTime(streamOffsetRef.current + (Number.isFinite(t) ? t : 0));
+      setCurrentTime(Number.isFinite(t) ? t : 0);
     };
     const handleDurationChange = () => {
       // fallbackDuration is authoritative when set — video.duration for fragmented MP4
@@ -334,8 +291,7 @@ export function VideoPlayer({
     const handleProgress = () => {
       if (video.buffered.length > 0) {
         const bufferedEnd = video.buffered.end(video.buffered.length - 1);
-        // Add streamOffset so buffered bar uses the same absolute coordinate as currentTime
-        setBuffered(streamOffsetRef.current + bufferedEnd);
+        setBuffered(bufferedEnd);
       }
     };
     const handleVolumeChange = () => {
@@ -344,11 +300,8 @@ export function VideoPlayer({
     };
     const handleError = () => {
       if (!video.error) return;
-      // In seek-restart mode allow up to 10 retries — the worker may be waiting up to 30s
-      // for pieces to download before it can start ffmpeg (202 responses while buffering).
-      const maxRecovery = seekRestartBaseRef.current ? 10 : 3;
-      if (recoveryAttemptsRef.current < maxRecovery) {
-        recoverStream(seekRestartBaseRef.current ? "Buffering — waiting for download..." : "Connection lost. Retrying stream...");
+      if (recoveryAttemptsRef.current < 3) {
+        recoverStream("Connection lost. Retrying stream...");
         return;
       }
       if (video.error.code === 2 || video.error.code === 4) {
@@ -368,9 +321,8 @@ export function VideoPlayer({
 
       if (stalledTimeoutRef.current) clearTimeout(stalledTimeoutRef.current);
       stalledTimeoutRef.current = setTimeout(() => {
-        const maxRecovery = seekRestartBaseRef.current ? 10 : 3;
-        if (recoveryAttemptsRef.current < maxRecovery) {
-          recoverStream(seekRestartBaseRef.current ? "Buffering — waiting for download..." : "Stream stalled. Attempting to resume...");
+        if (recoveryAttemptsRef.current < 3) {
+          recoverStream("Stream stalled. Attempting to resume...");
         } else {
           setStreamError("Stream stalled. No data is being received.");
           setIsBuffering(false);
@@ -388,19 +340,15 @@ export function VideoPlayer({
       }
     };
     const handleUnexpectedEnd = () => {
-      // Use fallbackDuration for seek-restart mode since video.duration is Infinity/NaN there
       const effectiveDuration =
         fallbackDuration ||
         (Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0);
-      const absNow =
-        streamOffsetRef.current +
-        (Number.isFinite(video.currentTime) ? video.currentTime : 0);
+      const now = Number.isFinite(video.currentTime) ? video.currentTime : 0;
       // Within 2s of real end — let it finish naturally
-      if (effectiveDuration && effectiveDuration - absNow <= 2) return;
+      if (effectiveDuration && effectiveDuration - now <= 2) return;
       if (isTvPlaybackRef.current && isInitialStrictBuffering) return;
-      const maxRecovery = seekRestartBaseRef.current ? 10 : 3;
-      if (recoveryAttemptsRef.current < maxRecovery) {
-        recoverStream(seekRestartBaseRef.current ? "Buffering — waiting for download..." : "Stream paused. Resuming...");
+      if (recoveryAttemptsRef.current < 3) {
+        recoverStream("Stream paused. Resuming...");
       }
     };
 
@@ -441,8 +389,6 @@ export function VideoPlayer({
     if (!video) return;
 
     const handleResumeSeek = () => {
-      // Seek-restart mode handles its own resume via restartAt — don't interfere
-      if (seekRestartBaseRef.current) return;
       if (pendingResumeTimeRef.current === null) return;
       const resumeTime = pendingResumeTimeRef.current;
       pendingResumeTimeRef.current = null;
@@ -706,15 +652,6 @@ export function VideoPlayer({
     });
     setTimeout(() => setSkipIndicator((prev) => ({ ...prev, show: false })), 800);
 
-    // In seek-restart mode, currentTime is relative to the current segment — use absolute time
-    if (seekRestartBaseRef.current) {
-      const absNow = streamOffsetRef.current + video.currentTime;
-      const effectiveDuration = duration || Infinity;
-      const absTarget = Math.max(0, Math.min(absNow + seconds, effectiveDuration - 1));
-      restartAt(absTarget);
-      return;
-    }
-
     try {
       const effectiveDuration = Number.isFinite(video.duration) ? video.duration : (duration || Infinity);
       const newTime = Math.max(0, Math.min(video.currentTime + seconds, effectiveDuration - 1));
@@ -897,14 +834,6 @@ export function VideoPlayer({
     const video = videoRef.current;
     if (!video) return;
 
-    // In seek-restart mode, time is an absolute movie position
-    if (seekRestartBaseRef.current) {
-      const effectiveDuration = duration || Infinity;
-      const absTarget = Math.max(0, Math.min(time, effectiveDuration - 1));
-      restartAt(absTarget);
-      return;
-    }
-
     const effectiveDuration = Number.isFinite(video.duration) ? video.duration : (duration || 0);
     const newTime = Math.max(0, Math.min(time, effectiveDuration - 1));
 
@@ -1038,28 +967,6 @@ export function VideoPlayer({
     if (!video) return;
     video.playbackRate = rate;
     setPlaybackRate(rate);
-  };
-
-  const adjustAudioOffset = (deltaMs: number) => {
-    const video = videoRef.current;
-    if (!video || !seekRestartBaseRef.current) return;
-    const newOffset = audioOffsetMs + deltaMs;
-    setAudioOffsetMs(newOffset);
-    audioOffsetMsRef.current = newOffset;
-    setAudioOffsetInput("");
-    // Restart stream at the current absolute position with the new offset
-    const absNow = streamOffsetRef.current + (Number.isFinite(video.currentTime) ? video.currentTime : 0);
-    restartAt(absNow);
-  };
-
-  const applyAudioOffsetAbsolute = (ms: number) => {
-    const video = videoRef.current;
-    if (!video || !seekRestartBaseRef.current) return;
-    setAudioOffsetMs(ms);
-    audioOffsetMsRef.current = ms;
-    setAudioOffsetInput("");
-    const absNow = streamOffsetRef.current + (Number.isFinite(video.currentTime) ? video.currentTime : 0);
-    restartAt(absNow);
   };
 
   return (
@@ -1483,77 +1390,6 @@ export function VideoPlayer({
             {/* Spacer - only on desktop */}
             {!prefersAlwaysOnControls && <div className="flex-1" />}
 
-            {/* Audio sync offset - only show in seek-restart (transcoded) mode, hide on TV */}
-            {!prefersAlwaysOnControls && seekRestartBase && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    className={cn(
-                      "text-white hover:bg-white/10 text-xs h-10 px-2 rounded-full",
-                      "focus:bg-white/20 focus:ring-2 focus:ring-white focus:outline-none",
-                      audioOffsetMs !== 0 && "text-yellow-400"
-                    )}
-                  >
-                    {audioOffsetMs === 0 ? "Sync" : `${audioOffsetMs > 0 ? "+" : ""}${audioOffsetMs}ms`}
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="bg-zinc-900/95 border-zinc-800 backdrop-blur-sm min-w-[180px]">
-                  <div className="px-3 py-1.5 text-xs text-zinc-400">Audio Sync</div>
-                  <div className="px-3 pb-1.5 text-[11px] leading-relaxed text-zinc-500">
-                    <p>Hear voice before lips move? <span className="text-zinc-300">+50, +100</span></p>
-                    <p>See lips move before voice? <span className="text-zinc-300">-50, -100</span></p>
-                  </div>
-                  {/* Custom ms input */}
-                  <div className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
-                    <div className="flex items-center gap-1">
-                      <input
-                        type="number"
-                        value={audioOffsetInput}
-                        onChange={(e) => setAudioOffsetInput(e.target.value)}
-                        onKeyDown={(e) => {
-                          e.stopPropagation();
-                          if (e.key === "Enter") {
-                            const ms = parseInt(audioOffsetInput, 10);
-                            if (!isNaN(ms)) applyAudioOffsetAbsolute(ms);
-                          }
-                        }}
-                        placeholder={`${audioOffsetMs}ms`}
-                        className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                      />
-                      <button
-                        onClick={() => {
-                          const ms = parseInt(audioOffsetInput, 10);
-                          if (!isNaN(ms)) applyAudioOffsetAbsolute(ms);
-                        }}
-                        className="shrink-0 bg-zinc-700 hover:bg-zinc-600 text-white text-xs px-2 py-1 rounded"
-                      >
-                        Apply
-                      </button>
-                    </div>
-                  </div>
-                  {/* Preset adjustments */}
-                  <DropdownMenuItem onClick={() => adjustAudioOffset(-100)} className="cursor-pointer text-xs">
-                    -100ms
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => adjustAudioOffset(-50)} className="cursor-pointer text-xs">
-                    -50ms
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onClick={() => applyAudioOffsetAbsolute(0)}
-                    className={cn("cursor-pointer text-xs", audioOffsetMs === 0 && "bg-white/10")}
-                  >
-                    Reset (0ms)
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => adjustAudioOffset(50)} className="cursor-pointer text-xs">
-                    +50ms
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => adjustAudioOffset(100)} className="cursor-pointer text-xs">
-                    +100ms
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
 
             {/* Playback speed - hide on TV */}
             {!prefersAlwaysOnControls && (
@@ -1586,31 +1422,6 @@ export function VideoPlayer({
               </DropdownMenu>
             )}
 
-            {/* VLC + Copy URL — hide on TV */}
-            {!prefersAlwaysOnControls && rawStreamUrl && (
-              <>
-                <Button
-                  variant="ghost"
-                  className="text-white hover:bg-white/10 text-xs h-10 px-2 rounded-full focus:bg-white/20 focus:ring-2 focus:ring-white focus:outline-none"
-                  onClick={() => window.open(`vlc://${rawStreamUrl}`, "_blank")}
-                  title="Open in VLC"
-                >
-                  VLC
-                </Button>
-                <Button
-                  variant="ghost"
-                  className="text-white hover:bg-white/10 text-xs h-10 px-2 rounded-full focus:bg-white/20 focus:ring-2 focus:ring-white focus:outline-none"
-                  onClick={() => {
-                    navigator.clipboard.writeText(rawStreamUrl).then(() => {
-                      setFallbackNotice("Stream URL copied!");
-                    });
-                  }}
-                  title="Copy stream URL for any external player"
-                >
-                  Copy URL
-                </Button>
-              </>
-            )}
 
             {/* PiP - hide on TV as it may not be supported */}
             {!prefersAlwaysOnControls && (

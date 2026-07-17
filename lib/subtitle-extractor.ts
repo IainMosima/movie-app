@@ -2,8 +2,11 @@ import "server-only";
 import { execFile } from "child_process";
 import { join } from "path";
 import { existsSync, mkdirSync, readFileSync } from "fs";
+import { getDataDir } from "@/lib/data-dir";
 
-const SUBTITLE_CACHE_PATH = join(process.cwd(), "data", "cache", "subtitles");
+function getSubtitleCachePath(): string {
+  return join(getDataDir(), "cache", "subtitles");
+}
 
 // Text-based subtitle codecs that ffmpeg can convert to WebVTT
 const TEXT_CODECS = new Set([
@@ -104,7 +107,7 @@ export function extractSubtitleTrack(
   streamIndex: number,
   infoHash: string
 ): Promise<string | null> {
-  const cacheDir = join(SUBTITLE_CACHE_PATH, infoHash);
+  const cacheDir = join(getSubtitleCachePath(), infoHash);
   const outPath = join(cacheDir, `stream_${streamIndex}.vtt`);
 
   // Already cached
@@ -148,7 +151,7 @@ export function readCachedSubtitle(
   streamIndex: number
 ): string | null {
   const outPath = join(
-    SUBTITLE_CACHE_PATH,
+    getSubtitleCachePath(),
     infoHash,
     `stream_${streamIndex}.vtt`
   );

@@ -198,6 +198,25 @@ class TorrentEngine {
       this.worker = null;
     }
   }
+
+  /**
+   * Cleanly kill and respawn the worker so it picks up a new data directory.
+   * Detaches the "exit" listener first so this doesn't also trigger the
+   * crash-recovery auto-restart timer in spawnWorker's exit handler.
+   */
+  async restartWorker(): Promise<void> {
+    if (this.worker) {
+      this.worker.removeAllListeners("exit");
+      this.worker.kill("SIGTERM");
+      this.worker = null;
+    }
+    this.workerPort = null;
+    this.readyPromise = new Promise((resolve) => {
+      this.resolveReady = resolve;
+    });
+    this.spawnWorker();
+    await this.readyPromise;
+  }
 }
 
 export function getTorrentEngine(): TorrentEngine {

@@ -1,25 +1,29 @@
 import "server-only";
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
+import { getDataDir } from "@/lib/data-dir";
 import type { LibraryItem, LibraryData } from "@/types";
 
-const DATA_PATH = join(process.cwd(), "data", "library.json");
+function getLibraryPath(): string {
+  return join(getDataDir(), "library.json");
+}
 
-function ensureDataFile(): void {
-  if (!existsSync(DATA_PATH)) {
+function ensureDataFile(path: string): void {
+  if (!existsSync(path)) {
     const initial: LibraryData = { items: [] };
-    writeFileSync(DATA_PATH, JSON.stringify(initial, null, 2));
+    writeFileSync(path, JSON.stringify(initial, null, 2));
   }
 }
 
 export function getLibrary(): LibraryData {
-  ensureDataFile();
-  const data = readFileSync(DATA_PATH, "utf-8");
+  const path = getLibraryPath();
+  ensureDataFile(path);
+  const data = readFileSync(path, "utf-8");
   return JSON.parse(data) as LibraryData;
 }
 
 function saveLibrary(data: LibraryData): void {
-  writeFileSync(DATA_PATH, JSON.stringify(data, null, 2));
+  writeFileSync(getLibraryPath(), JSON.stringify(data, null, 2));
 }
 
 export function getAllItems(): LibraryItem[] {

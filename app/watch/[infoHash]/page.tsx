@@ -26,8 +26,6 @@ export default function WatchPage({ params }: WatchPageProps) {
   const hasStartedRef = useRef(false);
   const [subtitles, setSubtitles] = useState<{ label: string; src: string }[]>([]);
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
-  const [aacStreamUrl, setAacStreamUrl] = useState<string | null>(null);
-  const [useAacStream, setUseAacStream] = useState(false);
   const [probedDuration, setProbedDuration] = useState<number | null>(null);
   const [probeComplete, setProbeComplete] = useState(false);
   const [peersReady, setPeersReady] = useState(false);
@@ -51,7 +49,6 @@ export default function WatchPage({ params }: WatchPageProps) {
           if (!isSecure) {
             const workerBase = `http://${host}:${port}`;
             setStreamUrl(`${workerBase}/stream/${infoHash}${filePart}`);
-            setAacStreamUrl(`${workerBase}/stream-aac/${infoHash}${filePart}`);
           }
         }
       } catch {
@@ -145,14 +142,13 @@ export default function WatchPage({ params }: WatchPageProps) {
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [infoHash]);
 
-  // Probe container/codec — route to AAC-transcoded stream unless positive proof it works natively.
-  // Retries in the background until we get a real durationSec (MKV header may not be on disk on first try).
+  // Probe for durationSec — needed by the seek bar. Retries until MKV header is on disk.
   useEffect(() => {
-    if (!aacStreamUrl) {
+    if (!streamUrl) {
       setProbeComplete(true);
       return;
     }
-    const probeUrl = aacStreamUrl.replace("/stream-aac/", "/probe/");
+    const probeUrl = streamUrl.replace("/stream/", "/probe/");
     let cancelled = false;
     let attempt = 0;
     const maxAttempts = 15;
@@ -163,37 +159,20 @@ export default function WatchPage({ params }: WatchPageProps) {
         const data = r.ok ? await r.json() : null;
         if (cancelled) return;
 
-        if (!data) {
-          // Probe fetch returned non-OK — safe default is transcode.
-          setUseAacStream(true);
-          setProbeComplete(true);
-          return;
-        }
-
-        // Decide routing on first response
-        if (attempt === 0 && !data.useDirectStream) {
-          console.log(`Routing to AAC transcode: ${data.reason}`);
-          setUseAacStream(true);
-        }
-
-        if (data.durationSec && data.durationSec > 0) {
+        if (data?.durationSec && data.durationSec > 0) {
           setProbedDuration(data.durationSec);
           setProbeComplete(true);
           return;
         }
 
-        // No duration yet — let the player start (can't gate forever), and retry in the background
+        // No duration yet — let the player start and retry in the background
         setProbeComplete(true);
         attempt += 1;
         if (attempt < maxAttempts) {
           setTimeout(runProbe, 2000);
-        } else {
-          console.warn("Probe never returned a duration after retries");
         }
       } catch {
         if (cancelled) return;
-        // Network error — safe default is transcode, but keep retrying for duration
-        setUseAacStream(true);
         setProbeComplete(true);
         attempt += 1;
         if (attempt < maxAttempts) setTimeout(runProbe, 2000);
@@ -204,7 +183,7 @@ export default function WatchPage({ params }: WatchPageProps) {
     return () => {
       cancelled = true;
     };
-  }, [aacStreamUrl]);
+  }, [streamUrl]);
 
   // Fetch subtitle tracks
   useEffect(() => {
@@ -271,19 +250,15 @@ export default function WatchPage({ params }: WatchPageProps) {
     );
   }
 
-  const activeStreamUrl = useAacStream && aacStreamUrl ? aacStreamUrl : streamUrl!;
-
   return (
     <div className="fixed inset-0 bg-black z-50">
       <VideoPlayer
-        src={activeStreamUrl}
+        src={streamUrl!}
         title={title}
         onClose={handleClose}
         autoPlay
         subtitles={subtitles}
-        seekRestartBase={useAacStream && aacStreamUrl ? aacStreamUrl : undefined}
-        fallbackDuration={useAacStream ? (probedDuration ?? undefined) : undefined}
-        rawStreamUrl={streamUrl ?? undefined}
+        fallbackDuration={probedDuration ?? undefined}
       />
     </div>
   );

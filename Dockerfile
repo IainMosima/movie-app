@@ -52,7 +52,8 @@ USER app
 
 ENV NODE_ENV=production \
     HOSTNAME=0.0.0.0 \
-    PORT=8181
+    PORT=8181 \
+    MEDIA_ROOT=/app/data
 
 # Documentation only — host networking ignores EXPOSE, but keeps intent visible
 EXPOSE 8181 9191

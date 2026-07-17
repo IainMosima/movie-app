@@ -6,8 +6,7 @@ import {
   extractSubtitleTrack,
 } from "@/lib/subtitle-extractor";
 import { getTorrentEngine } from "@/lib/torrent-engine";
-
-const CACHE_PATH = join(process.cwd(), "data", "cache");
+import { getDataDir } from "@/lib/data-dir";
 
 export async function GET(
   request: NextRequest,
@@ -49,7 +48,7 @@ export async function GET(
         );
       }
 
-      const filePath = join(CACHE_PATH, mkvFile.path);
+      const filePath = join(getDataDir(), "cache", mkvFile.path);
       const vttPath = await extractSubtitleTrack(filePath, streamIndex, infoHash);
 
       if (!vttPath) {
@@ -104,7 +103,7 @@ export async function GET(
         );
 
       if (mkvFile) {
-        const filePath = join(CACHE_PATH, mkvFile.path);
+        const filePath = join(getDataDir(), "cache", mkvFile.path);
         const embedded = await probeEmbeddedSubtitles(filePath);
         for (const track of embedded) {
           const name =

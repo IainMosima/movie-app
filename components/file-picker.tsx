@@ -13,6 +13,7 @@ import {
   Wifi,
   ChevronUp,
   ChevronDown,
+  Eraser,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -63,6 +64,7 @@ export function FilePicker({
   const [infoHash, setInfoHash] = useState("");
   const [files, setFiles] = useState<TorrentFile[]>([]);
   const [mainVideoIndex, setMainVideoIndex] = useState<number | null>(null);
+  const [clearingIndex, setClearingIndex] = useState<number | null>(null);
 
   // Status polling
   const [status, setStatus] = useState<TorrentStatus | null>(null);
@@ -197,6 +199,17 @@ export function FilePicker({
     if (infoHash) {
       const file = files[fileIndex];
       onSelectFile(infoHash, fileIndex, file?.name || "video");
+    }
+  };
+
+  const handleClear = async (e: React.MouseEvent, fileIndex: number) => {
+    e.stopPropagation();
+    if (!infoHash) return;
+    setClearingIndex(fileIndex);
+    try {
+      await fetch(`/api/torrent/${infoHash}/file/${fileIndex}/cache`, { method: "DELETE" });
+    } finally {
+      setClearingIndex(null);
     }
   };
 
@@ -364,40 +377,57 @@ export function FilePicker({
                       {videoFiles.map((file) => {
                         const Icon = getFileIcon(file);
                         const isMain = file.index === mainVideoIndex;
+                        const isClearing = clearingIndex === file.index;
 
                         return (
-                          <button
+                          <div
                             key={file.index}
-                            onClick={() => handlePlay(file.index)}
-                            className="group w-full flex items-center gap-4 p-4 rounded-xl text-left transition-all hover:bg-purple-600/20 border-2 border-transparent hover:border-purple-600 hover:scale-[1.01] focus:bg-purple-600/20 focus:border-purple-600 focus:outline-none"
+                            className="group flex items-center gap-2 rounded-xl border-2 border-transparent hover:border-purple-600 hover:scale-[1.01] transition-all"
                           >
-                            <div className="h-12 w-12 rounded-xl flex items-center justify-center shrink-0 bg-zinc-800 group-hover:bg-purple-600 transition-colors">
-                              <Icon className="h-6 w-6" />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-base text-zinc-200 truncate font-medium">
-                                {file.name}
-                              </p>
-                              <div className="flex items-center gap-2 mt-1">
-                                <span className="text-sm text-zinc-500">
-                                  {file.sizeFormatted}
-                                </span>
-                                <Badge
-                                  variant="outline"
-                                  className="text-xs uppercase border-zinc-700"
-                                >
-                                  {file.extension}
-                                </Badge>
-                                {isMain && (
-                                  <span className="flex items-center gap-1 text-xs text-amber-500">
-                                    <Star className="h-3.5 w-3.5 fill-current" />
-                                    Main
-                                  </span>
-                                )}
+                            <button
+                              onClick={() => handlePlay(file.index)}
+                              className="flex flex-1 items-center gap-4 p-4 text-left hover:bg-purple-600/20 focus:bg-purple-600/20 focus:outline-none rounded-xl min-w-0"
+                            >
+                              <div className="h-12 w-12 rounded-xl flex items-center justify-center shrink-0 bg-zinc-800 group-hover:bg-purple-600 transition-colors">
+                                <Icon className="h-6 w-6" />
                               </div>
-                            </div>
-                            <Play className="h-6 w-6 text-zinc-600 group-hover:text-purple-400 shrink-0 transition-colors" />
-                          </button>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-base text-zinc-200 truncate font-medium">
+                                  {file.name}
+                                </p>
+                                <div className="flex items-center gap-2 mt-1">
+                                  <span className="text-sm text-zinc-500">
+                                    {file.sizeFormatted}
+                                  </span>
+                                  <Badge
+                                    variant="outline"
+                                    className="text-xs uppercase border-zinc-700"
+                                  >
+                                    {file.extension}
+                                  </Badge>
+                                  {isMain && (
+                                    <span className="flex items-center gap-1 text-xs text-amber-500">
+                                      <Star className="h-3.5 w-3.5 fill-current" />
+                                      Main
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <Play className="h-6 w-6 text-zinc-600 group-hover:text-purple-400 shrink-0 transition-colors" />
+                            </button>
+                            <button
+                              onClick={(e) => handleClear(e, file.index)}
+                              disabled={isClearing}
+                              className="shrink-0 h-10 w-10 flex items-center justify-center rounded-lg text-zinc-500 hover:text-amber-400 hover:bg-amber-500/10 transition-colors mr-2"
+                              title="Clear cached bytes (re-downloads on next play)"
+                            >
+                              {isClearing ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Eraser className="h-4 w-4" />
+                              )}
+                            </button>
+                          </div>
                         );
                       })}
                     </div>

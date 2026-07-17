@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { FilePicker } from "@/components/file-picker";
 import { MagnetInput } from "@/components/magnet-input";
+import { StoragePanel } from "@/components/storage-panel";
 import { useLibrary } from "@/hooks/use-library";
 import {
   Play,
@@ -13,6 +14,7 @@ import {
   Film,
   Loader2,
   BookmarkPlus,
+  Eraser,
 } from "lucide-react";
 import { isValidTorrentInput, extractTitleFromInput } from "@/lib/torrent-utils";
 import { Button } from "@/components/ui/button";
@@ -30,7 +32,7 @@ import type { LibraryItem } from "@/types";
 
 export default function HomePage() {
   const router = useRouter();
-  const { items, isLoading: libraryLoading, addItem, deleteItem } = useLibrary();
+  const { items, isLoading: libraryLoading, addItem, deleteItem, clearItemCache } = useLibrary();
 
   // File picker state
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -225,6 +227,15 @@ export default function HomePage() {
     }
   };
 
+  const handleClearCache = async (id: string, name: string) => {
+    try {
+      await clearItemCache(id);
+      toast.success(`Cache cleared for "${name}"`);
+    } catch {
+      toast.error("Failed to clear cache");
+    }
+  };
+
   // Quick add from magnet input
   const handleQuickPlay = (magnet: string) => {
     handlePlayMagnet(magnet);
@@ -299,6 +310,11 @@ export default function HomePage() {
             <div className="h-px flex-1 bg-zinc-800" />
           </div>
           <MagnetInput onSubmit={handleQuickPlay} />
+        </div>
+
+        {/* Storage */}
+        <div className="mb-8">
+          <StoragePanel />
         </div>
 
         {/* Library */}
@@ -400,6 +416,7 @@ export default function HomePage() {
                   onPlay={() => handlePlayMagnet(item.magnet, item.name)}
                   onOpen={() => handleOpenListing(item.magnet, item.name)}
                   onDelete={() => handleDelete(item.id, item.name)}
+                  onClearCache={() => handleClearCache(item.id, item.name)}
                   onVLC={() => handleVLC(item.magnet, item.name)}
                 />
               ))}
@@ -427,20 +444,30 @@ function LibraryCard({
   onPlay,
   onOpen,
   onDelete,
+  onClearCache,
   onVLC,
 }: {
   item: LibraryItem;
   onPlay: () => void;
   onOpen: () => void;
   onDelete: () => void;
+  onClearCache: () => void;
   onVLC: () => void;
 }) {
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
 
   const handleDelete = async (e: React.MouseEvent) => {
     e.stopPropagation();
     setIsDeleting(true);
     await onDelete();
+  };
+
+  const handleClearCache = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setIsClearing(true);
+    await onClearCache();
+    setIsClearing(false);
   };
 
   return (
@@ -477,11 +504,26 @@ function LibraryCard({
 
         <button
           onClick={(e) => { e.stopPropagation(); onVLC(); }}
-          className="shrink-0 text-xs font-medium text-zinc-500 hover:text-orange-400 opacity-0 group-hover:opacity-100 transition-all px-2 py-1 rounded hover:bg-orange-500/10"
+          className="shrink-0 text-xs font-medium text-zinc-500 hover:text-orange-400 transition-all px-2 py-1 rounded hover:bg-orange-500/10"
           title="Get stream URL for VLC"
         >
           VLC
         </button>
+
+        <Button
+          size="icon"
+          variant="ghost"
+          onClick={handleClearCache}
+          disabled={isClearing}
+          className="h-8 w-8 text-zinc-600 hover:text-amber-400 shrink-0 transition-colors"
+          title="Clear cache (keeps in library)"
+        >
+          {isClearing ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Eraser className="h-4 w-4" />
+          )}
+        </Button>
 
         <Button
           size="icon"
