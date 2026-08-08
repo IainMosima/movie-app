@@ -157,6 +157,25 @@ export interface StorageReport {
   entries: StorageEntry[];
 }
 
+// Watch progress - "where was I?" across every device on the LAN.
+// Keyed by infoHash + fileIndex so each episode inside a season pack keeps its
+// own position, and Quick Play titles that were never saved are tracked too.
+export interface WatchRecord {
+  infoHash: string;
+  fileIndex: number;
+  title: string;
+  magnet: string;
+  libraryItemId?: string;
+  positionSec: number;
+  durationSec: number;
+  finished: boolean;
+  updatedAt: number;
+}
+
+export interface WatchProgressData {
+  records: WatchRecord[];
+}
+
 // Runtime-switchable data directory
 export interface DataDirReport {
   activeDir: string;

@@ -35,7 +35,14 @@ interface VideoPlayerProps {
   strictBufferSizeMB?: number;
   /** Fallback duration in seconds when video.duration is Infinity/NaN (MKV streams) */
   fallbackDuration?: number;
+  /** Seconds to pick up from. Seeds the same resume path used by stream recovery. */
+  resumeFrom?: number;
+  /** Throttled playback position reporter (~every 10s) for watch progress. */
+  onProgress?: (positionSec: number, durationSec: number) => void;
 }
+
+const PROGRESS_REPORT_INTERVAL_MS = 10_000;
+const RESUME_NOTICE_MS = 8_000;
 
 const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 const STALL_RECOVERY_MS = 45_000;
@@ -50,6 +57,8 @@ export function VideoPlayer({
   strictPrebuffering = false,
   strictBufferSizeMB,
   fallbackDuration,
+  resumeFrom,
+  onProgress,
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -82,6 +91,12 @@ export function VideoPlayer({
   const [fallbackNotice, setFallbackNotice] = useState<string | null>(null);
   const [srcRevision, setSrcRevision] = useState(0);
   const pendingResumeTimeRef = useRef<number | null>(null);
+  const resumeAppliedRef = useRef(false);
+  const [resumedFromSec, setResumedFromSec] = useState<number | null>(null);
+  const lastProgressReportRef = useRef(0);
+  // Held in a ref so a new callback identity from the parent doesn't tear down
+  // and re-attach every media listener on each render.
+  const onProgressRef = useRef(onProgress);
   const recoveryAttemptsRef = useRef(0);
   const lastRecoveryAtRef = useRef(0);
   const [isInitialStrictBuffering, setIsInitialStrictBuffering] = useState<boolean>(
@@ -89,12 +104,35 @@ export function VideoPlayer({
   );
 
   useEffect(() => {
+    onProgressRef.current = onProgress;
+  }, [onProgress]);
+
+  useEffect(() => {
     setPlaybackSrc(src);
     setIsUsingFallbackStream(false);
     setSrcRevision(0);
     pendingResumeTimeRef.current = null;
+    resumeAppliedRef.current = false;
+    setResumedFromSec(null);
     setBuffered(0);
   }, [src]);
+
+  // Seed the resume seek once per source; the loadedmetadata/canplay/loadeddata
+  // listeners further down perform the actual seek. Guarded so a late-arriving
+  // resumeFrom can never yank playback backwards mid-watch.
+  useEffect(() => {
+    if (!resumeFrom || resumeFrom <= 0 || resumeAppliedRef.current) return;
+    resumeAppliedRef.current = true;
+    pendingResumeTimeRef.current = resumeFrom;
+    setResumedFromSec(resumeFrom);
+  }, [resumeFrom, playbackSrc]);
+
+  // The "resumed from…" chip is a brief offer, not a permanent overlay.
+  useEffect(() => {
+    if (resumedFromSec === null) return;
+    const timer = setTimeout(() => setResumedFromSec(null), RESUME_NOTICE_MS);
+    return () => clearTimeout(timer);
+  }, [resumedFromSec]);
 
   useEffect(() => {
     setIsInitialStrictBuffering(strictPrebuffering);
@@ -265,11 +303,33 @@ export function VideoPlayer({
     const video = videoRef.current;
     if (!video) return;
 
+    const effectiveDuration = () =>
+      fallbackDuration ||
+      (Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0);
+
+    const reportProgress = (force = false) => {
+      const report = onProgressRef.current;
+      const t = video.currentTime;
+      if (!report || !Number.isFinite(t) || t <= 0) return;
+      const now = Date.now();
+      if (!force && now - lastProgressReportRef.current < PROGRESS_REPORT_INTERVAL_MS) {
+        return;
+      }
+      lastProgressReportRef.current = now;
+      report(t, effectiveDuration());
+    };
+
     const handlePlay = () => setIsPlaying(true);
-    const handlePause = () => setIsPlaying(false);
+    const handlePause = () => {
+      setIsPlaying(false);
+      // Pausing is a likely prelude to walking away — save the exact spot rather
+      // than whatever the 10s tick last captured.
+      reportProgress(true);
+    };
     const handleTimeUpdate = () => {
       const t = video.currentTime;
       setCurrentTime(Number.isFinite(t) ? t : 0);
+      reportProgress();
     };
     const handleDurationChange = () => {
       // fallbackDuration is authoritative when set — video.duration for fragmented MP4
@@ -340,12 +400,14 @@ export function VideoPlayer({
       }
     };
     const handleUnexpectedEnd = () => {
-      const effectiveDuration =
-        fallbackDuration ||
-        (Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0);
+      const total = effectiveDuration();
       const now = Number.isFinite(video.currentTime) ? video.currentTime : 0;
-      // Within 2s of real end — let it finish naturally
-      if (effectiveDuration && effectiveDuration - now <= 2) return;
+      // Within 2s of real end — let it finish naturally, and bank the position
+      // so it registers as watched.
+      if (total && total - now <= 2) {
+        reportProgress(true);
+        return;
+      }
       if (isTvPlaybackRef.current && isInitialStrictBuffering) return;
       if (recoveryAttemptsRef.current < 3) {
         recoverStream("Stream paused. Resuming...");
@@ -1000,6 +1062,23 @@ export function VideoPlayer({
           <div className="rounded-full bg-black/70 px-4 py-2 text-sm text-white shadow-lg">
             {fallbackNotice}
           </div>
+        </div>
+      )}
+
+      {/* Resumed-from notice — fades out on its own, no dismissal required */}
+      {resumedFromSec !== null && resumedFromSec > 0 && (
+        <div className="absolute top-5 left-1/2 z-20 -translate-x-1/2 flex items-center gap-3 rounded-full bg-black/80 pl-5 pr-2 py-2 text-sm text-white backdrop-blur shadow-lg max-w-[calc(100%-2rem)]">
+          <span className="truncate">Resumed from {formatDuration(resumedFromSec)}</span>
+          <button
+            onClick={() => {
+              const video = videoRef.current;
+              if (video) video.currentTime = 0;
+              setResumedFromSec(null);
+            }}
+            className="shrink-0 rounded-full bg-white/10 hover:bg-white/20 px-3 py-1.5 text-xs font-medium transition-colors"
+          >
+            Start from beginning
+          </button>
         </div>
       )}
 

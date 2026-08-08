@@ -36,6 +36,15 @@ export default function WatchPage({ params }: WatchPageProps) {
   const [filePath, setFilePath] = useState<string | null>(null);
   const [showClearPrompt, setShowClearPrompt] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
+  const [cachedFormatted, setCachedFormatted] = useState<string | null>(null);
+
+  // Watch progress
+  const [resumeFrom, setResumeFrom] = useState(0);
+  const [progressLoaded, setProgressLoaded] = useState(false);
+  const [isFinished, setIsFinished] = useState(false);
+  const lastPositionRef = useRef<{ positionSec: number; durationSec: number } | null>(null);
+
+  const fileIndexNum = fileIndex ? parseInt(fileIndex, 10) || 0 : 0;
 
   // Get or create session + resolve direct stream URL
   useEffect(() => {
@@ -95,6 +104,93 @@ export default function WatchPage({ params }: WatchPageProps) {
 
     startSession();
   }, [infoHash, fileIndex]);
+
+  // Load the saved position before the player mounts, so resume is applied on
+  // the very first source load rather than yanking playback back mid-watch.
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadProgress = async () => {
+      try {
+        const res = await fetch(`/api/progress/${infoHash}?file=${fileIndexNum}`);
+        if (res.ok) {
+          const { record } = await res.json();
+          if (!cancelled && record && !record.finished) {
+            setResumeFrom(record.positionSec ?? 0);
+          }
+        }
+      } catch {
+        // No saved position just means starting from the top.
+      } finally {
+        if (!cancelled) setProgressLoaded(true);
+      }
+    };
+
+    loadProgress();
+    return () => {
+      cancelled = true;
+    };
+  }, [infoHash, fileIndexNum]);
+
+  // Report where we are. Fire-and-forget: progress tracking must never be able
+  // to interrupt playback.
+  const handleProgress = useCallback(
+    (positionSec: number, durationSec: number) => {
+      lastPositionRef.current = { positionSec, durationSec };
+      fetch("/api/progress", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          infoHash,
+          fileIndex: fileIndexNum,
+          positionSec,
+          durationSec,
+          title,
+        }),
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data?.record) setIsFinished(Boolean(data.record.finished));
+        })
+        .catch(() => {});
+    },
+    [infoHash, fileIndexNum, title]
+  );
+
+  // Flush the last known position when the page goes away. beforeunload alone is
+  // not enough — mobile Safari often skips it, which is exactly the "I closed it
+  // on my phone" case this feature exists for. visibilitychange is the reliable
+  // signal there.
+  useEffect(() => {
+    const flush = () => {
+      const last = lastPositionRef.current;
+      if (!last || last.positionSec <= 0) return;
+      const body = JSON.stringify({
+        infoHash,
+        fileIndex: fileIndexNum,
+        positionSec: last.positionSec,
+        durationSec: last.durationSec,
+        title,
+      });
+      try {
+        navigator.sendBeacon("/api/progress", body);
+      } catch {
+        // Best effort only
+      }
+    };
+
+    const handleVisibility = () => {
+      if (document.visibilityState === "hidden") flush();
+    };
+
+    window.addEventListener("beforeunload", flush);
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      window.removeEventListener("beforeunload", flush);
+      document.removeEventListener("visibilitychange", handleVisibility);
+      flush();
+    };
+  }, [infoHash, fileIndexNum, title]);
 
   // Poll until we have at least 1 peer, then start streaming
   useEffect(() => {
@@ -228,7 +324,16 @@ export default function WatchPage({ params }: WatchPageProps) {
   // offer to reclaim its bytes right there. Nothing is deleted unless asked.
   const handleClose = useCallback(() => {
     setShowClearPrompt(true);
-  }, []);
+    if (!filePath) return;
+    fetch(
+      `/api/torrent/${infoHash}/file/${fileIndexNum}/cache?path=${encodeURIComponent(filePath)}`
+    )
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.cachedBytes > 0) setCachedFormatted(data.cachedFormatted);
+      })
+      .catch(() => {});
+  }, [filePath, infoHash, fileIndexNum]);
 
   const handleKeep = useCallback(() => {
     router.push("/");
@@ -237,9 +342,8 @@ export default function WatchPage({ params }: WatchPageProps) {
   const handleClearAndClose = useCallback(async () => {
     setIsClearing(true);
     try {
-      const index = fileIndex ?? "0";
       const query = filePath ? `?path=${encodeURIComponent(filePath)}` : "";
-      await fetch(`/api/torrent/${infoHash}/file/${index}/cache${query}`, {
+      await fetch(`/api/torrent/${infoHash}/file/${fileIndexNum}/cache${query}`, {
         method: "DELETE",
       });
     } catch {
@@ -248,10 +352,11 @@ export default function WatchPage({ params }: WatchPageProps) {
       setIsClearing(false);
       router.push("/");
     }
-  }, [fileIndex, filePath, infoHash, router]);
+  }, [fileIndexNum, filePath, infoHash, router]);
 
-  // Show connecting screen until we have peers, a stream URL, and probe has completed
-  if (!peersReady || !streamUrl || !probeComplete) {
+  // Show connecting screen until we have peers, a stream URL, the probe has
+  // completed, and we know whether there's a position to resume from
+  if (!peersReady || !streamUrl || !probeComplete || !progressLoaded) {
     return (
       <div className="fixed inset-0 bg-black z-50 flex items-center justify-center">
         <div className="flex flex-col items-center gap-5 max-w-sm w-full px-8">
@@ -294,28 +399,37 @@ export default function WatchPage({ params }: WatchPageProps) {
         autoPlay
         subtitles={subtitles}
         fallbackDuration={probedDuration ?? undefined}
+        resumeFrom={resumeFrom}
+        onProgress={handleProgress}
       />
 
       {showClearPrompt && (
         <div className="fixed inset-0 z-[60] bg-black/85 flex items-center justify-center px-4">
-          <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 max-w-sm w-full shadow-2xl">
-            <h2 className="text-base font-semibold text-white mb-1">Done with this one?</h2>
+          <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 sm:p-6 max-w-sm w-full shadow-2xl">
+            <h2 className="text-base font-semibold text-white mb-1">
+              {isFinished ? "Finished — nice one." : "Done with this one?"}
+            </h2>
             <p className="text-sm text-zinc-500 mb-5">
-              Clearing frees the disk space it&apos;s using now. It stays in your
-              library and re-downloads if you play it again.
+              {isFinished
+                ? cachedFormatted
+                  ? `This is holding ${cachedFormatted}. Clearing frees it — it stays in your library and re-downloads if you play it again.`
+                  : "Clearing frees the disk space it's using. It stays in your library and re-downloads if you play it again."
+                : cachedFormatted
+                  ? `You can pick up where you left off later. Clearing frees the ${cachedFormatted} it's holding, and re-downloads on next play.`
+                  : "You can pick up where you left off later. Clearing frees the disk space it's using now."}
             </p>
             <div className="flex flex-col gap-2">
-              <Button onClick={handleClearAndClose} disabled={isClearing}>
+              <Button onClick={handleClearAndClose} disabled={isClearing} className="h-11">
                 {isClearing ? (
                   <Loader2 className="h-4 w-4 animate-spin mr-2" />
                 ) : null}
-                Clear this episode &amp; exit
+                {cachedFormatted ? `Clear ${cachedFormatted} & exit` : "Clear this episode & exit"}
               </Button>
               <Button
                 variant="outline"
                 onClick={handleKeep}
                 disabled={isClearing}
-                className="border-zinc-700"
+                className="border-zinc-700 h-11"
               >
                 Keep it &amp; exit
               </Button>
@@ -323,7 +437,7 @@ export default function WatchPage({ params }: WatchPageProps) {
                 variant="ghost"
                 onClick={() => setShowClearPrompt(false)}
                 disabled={isClearing}
-                className="text-zinc-500"
+                className="text-zinc-500 h-11"
               >
                 Back to video
               </Button>

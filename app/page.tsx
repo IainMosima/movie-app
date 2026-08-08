@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { ContinueWatching } from "@/components/continue-watching";
 import { FilePicker } from "@/components/file-picker";
 import { FolderCard } from "@/components/folder-card";
 import { FolderDialog } from "@/components/folder-dialog";
@@ -11,6 +12,7 @@ import { LibraryToolbar, type CategoryFilter } from "@/components/library-toolba
 import { MagnetInput } from "@/components/magnet-input";
 import { StoragePanel } from "@/components/storage-panel";
 import { useLibrary } from "@/hooks/use-library";
+import { useWatchProgress } from "@/hooks/use-watch-progress";
 import {
   Plus,
   Film,
@@ -32,7 +34,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import type { LibraryItemWithUsage, LibraryCategory } from "@/types";
+import type { LibraryItemWithUsage, LibraryCategory, WatchRecord } from "@/types";
 
 /** Movies / Series segmented picker used in both create dialogs. */
 function CategoryPicker({
@@ -86,6 +88,8 @@ export default function HomePage() {
     deleteFolder,
     clearFolderCache,
   } = useLibrary();
+
+  const { records: watchRecords, forget: forgetWatchRecord } = useWatchProgress();
 
   // File picker state
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -233,6 +237,37 @@ export default function HomePage() {
 
   const handleOpenListing = (magnet: string, title?: string) => {
     handlePlayMagnet(magnet, title, { forcePicker: true });
+  };
+
+  // Resuming has to re-add the torrent before navigating: the watch page waits
+  // on /api/torrents and would sit on "Finding peers…" forever for a torrent the
+  // worker no longer holds. Goes straight to the saved file — never the picker.
+  const handleResume = async (record: WatchRecord) => {
+    setIsLoadingPlay(true);
+    try {
+      const res = await fetch("/api/torrent/files", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ magnet: record.magnet }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to load");
+      }
+      const data = await res.json();
+
+      localStorage.setItem(
+        "lastShow",
+        JSON.stringify({ magnet: record.magnet, title: record.title })
+      );
+      router.push(
+        `/watch/${data.infoHash}?title=${encodeURIComponent(record.title)}&file=${record.fileIndex}`
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to resume");
+    } finally {
+      setIsLoadingPlay(false);
+    }
   };
 
   const handleVLC = async (magnet: string, title?: string) => {
@@ -449,6 +484,17 @@ export default function HomePage() {
           </div>
           <MagnetInput onSubmit={handleQuickPlay} />
         </div>
+
+        {/* Continue Watching — hides itself when nothing is in progress */}
+        {watchRecords.length > 0 && (
+          <div className="mb-6 sm:mb-8">
+            <ContinueWatching
+              records={watchRecords}
+              onResume={handleResume}
+              onForget={forgetWatchRecord}
+            />
+          </div>
+        )}
 
         {/* Storage */}
         <div className="mb-6 sm:mb-8">

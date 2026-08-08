@@ -8,6 +8,17 @@ import {
   formatBytes,
 } from "@/lib/storage-store";
 
+// GET /api/torrent/[infoHash]/file/[index]/cache?path=<relative cache path>
+// How much disk this one file is holding right now.
+export async function GET(req: NextRequest) {
+  const relPath = req.nextUrl.searchParams.get("path");
+  const cachedBytes = relPath ? allocatedSize(join(getCachePath(), relPath)) : 0;
+  return NextResponse.json({
+    cachedBytes,
+    cachedFormatted: formatBytes(cachedBytes),
+  });
+}
+
 // DELETE /api/torrent/[infoHash]/file/[index]/cache?path=<relative cache path>
 // Clears one episode's cached bytes. Prefers the worker (it also resets the
 // piece bitfield so the file re-downloads cleanly), and falls back to deleting
