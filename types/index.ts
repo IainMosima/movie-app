@@ -77,6 +77,8 @@ export interface ErrorResponse {
 }
 
 // Library - saved magnet links
+export type LibraryCategory = "movie" | "series";
+
 export interface LibraryItem {
   id: string;
   name: string;
@@ -85,10 +87,49 @@ export interface LibraryItem {
   quality?: string;
   size?: string;
   fileIndex?: number;
+  // Grouping: null/undefined means the item sits loose at the top level.
+  folderId?: string | null;
+  // Explicit category override. When absent it's detected from the name/magnet
+  // (see lib/category.ts), so existing items sort themselves without migration.
+  category?: LibraryCategory;
+  // Learned once the torrent resolves — the real on-disk cache folder name and
+  // infoHash, so cache reconciliation is exact instead of guessing from `dn=`.
+  cacheFolder?: string;
+  infoHash?: string;
+}
+
+// A folder holds a series (episode per magnet) or a movie set. Grouping only —
+// cached bytes still live under cache/<torrent-name>/ as before.
+export interface LibraryFolder {
+  id: string;
+  name: string;
+  createdAt: number;
+  category?: LibraryCategory;
 }
 
 export interface LibraryData {
   items: LibraryItem[];
+  folders: LibraryFolder[];
+}
+
+// GET /api/library — persisted shape joined with on-disk usage
+export interface LibraryItemWithUsage extends LibraryItem {
+  cachedBytes: number;
+  cachedFormatted: string;
+  // Always present in API responses — explicit choice or detected.
+  category: LibraryCategory;
+}
+
+export interface LibraryFolderWithUsage extends LibraryFolder {
+  itemCount: number;
+  cachedBytes: number;
+  cachedFormatted: string;
+  category: LibraryCategory;
+}
+
+export interface LibraryListResponse {
+  items: LibraryItemWithUsage[];
+  folders: LibraryFolderWithUsage[];
 }
 
 // Storage management - on-disk cache reconciliation

@@ -1,11 +1,12 @@
 import "server-only";
-import { readdirSync, statSync, existsSync, rmSync } from "fs";
+import { readdirSync, statSync, existsSync, rmSync, unlinkSync } from "fs";
 import { statfsSync } from "fs";
 import { join, resolve, sep } from "path";
 import { getAllItems } from "@/lib/library-store";
 import { extractInfoHashFromMagnet } from "@/lib/torrent-cache-actions";
 import { getDataDir } from "@/lib/data-dir";
 import type {
+  LibraryItem,
   StorageEntry,
   StorageEntryKind,
   DiskSpace,
@@ -27,7 +28,20 @@ export function formatBytes(bytes: number): string {
   return `${value.toFixed(value >= 100 || i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
-// Recursive byte size of a file or directory.
+// Bytes a single file actually occupies. WebTorrent writes sparse files, so a
+// partly-downloaded 4 GB episode reports 4 GB under stat.size while holding a
+// fraction of that on disk — `blocks` is the honest number.
+export function allocatedSize(p: string): number {
+  try {
+    const stat = statSync(p);
+    if (!stat.isFile()) return 0;
+    return typeof stat.blocks === "number" ? stat.blocks * 512 : stat.size;
+  } catch {
+    return 0;
+  }
+}
+
+// Recursive allocated size of a file or directory.
 function entrySize(p: string): number {
   let stat;
   try {
@@ -35,7 +49,9 @@ function entrySize(p: string): number {
   } catch {
     return 0;
   }
-  if (stat.isFile()) return stat.size;
+  if (stat.isFile()) {
+    return typeof stat.blocks === "number" ? stat.blocks * 512 : stat.size;
+  }
   if (!stat.isDirectory()) return 0;
 
   let total = 0;
@@ -51,7 +67,8 @@ function entrySize(p: string): number {
   return total;
 }
 
-// Decode a magnet's dn= display name — this is what the worker names the cache folder.
+// Decode a magnet's dn= display name — the closest thing to the torrent's name
+// we can know without asking the worker.
 function decodeDisplayName(magnet: string): string | null {
   const m = magnet.match(/[?&]dn=([^&]+)/i);
   if (!m) return null;
@@ -60,6 +77,53 @@ function decodeDisplayName(magnet: string): string | null {
   } catch {
     return m[1].replace(/\+/g, " ");
   }
+}
+
+// Strip everything but alphanumerics so release naming noise (dots, spaces,
+// dashes, tracker prefixes) stops defeating comparison.
+function normalizeName(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/**
+ * Find the library item a cache folder belongs to.
+ *
+ * Torrent names routinely differ from the magnet's `dn=` — e.g. the folder
+ * "www.UIndex.org    -    Invincible.2021.S04E07.1080p.WEB.h264-ETHEL" against
+ * dn "Invincible.2021.S04E07.1080p.WEB.h264-ETHEL". Exact equality misses those
+ * and mislabels a library item's cache as an orphan, which also makes the
+ * worker-independent delete path a silent no-op.
+ */
+function matchEntryToItem(name: string, items: LibraryItem[]): string | undefined {
+  // 1. The real folder name, recorded once the torrent resolved.
+  const exact = items.find((i) => i.cacheFolder === name);
+  if (exact) return exact.id;
+
+  const lower = name.toLowerCase();
+  const norm = normalizeName(name);
+
+  // 2. infoHash embedded in the folder name.
+  const byHash = items.find((i) => {
+    const hash = i.infoHash ?? extractInfoHashFromMagnet(i.magnet);
+    return hash ? lower.includes(hash.toLowerCase()) : false;
+  });
+  if (byHash) return byHash.id;
+
+  // 3. Normalized containment in either direction. The longest matching key
+  //    wins so a specific release name beats a short library label.
+  let best: { id: string; len: number } | undefined;
+  for (const item of items) {
+    const dn = decodeDisplayName(item.magnet);
+    for (const candidate of [dn, item.name]) {
+      if (!candidate) continue;
+      const key = normalizeName(candidate);
+      if (key.length < 8) continue; // too short to be a confident match
+      if (norm.includes(key) || key.includes(norm)) {
+        if (!best || key.length > best.len) best = { id: item.id, len: key.length };
+      }
+    }
+  }
+  return best?.id;
 }
 
 interface ScannedEntry {
@@ -91,35 +155,17 @@ export function scanCache(): ScannedEntry[] {
 export function reconcile(): StorageEntry[] {
   const items = getAllItems();
 
-  // Build lookup tables from library items: decoded display name + infoHash.
-  const byName = new Map<string, string>(); // lowercased name -> libraryItemId
-  const hashes: { hash: string; id: string }[] = [];
-  for (const item of items) {
-    const dn = decodeDisplayName(item.magnet);
-    if (dn) byName.set(dn.toLowerCase(), item.id);
-    const hash = extractInfoHashFromMagnet(item.magnet);
-    if (hash) hashes.push({ hash, id: item.id });
-  }
-
   return scanCache().map(({ name, sizeBytes }) => {
     let kind: StorageEntryKind;
     let libraryItemId: string | undefined;
 
     if (name === "subtitles") {
       kind = "subtitles";
-    } else if (/_h264\.mp4$/i.test(name)) {
+    } else if (/_h264\.mp4(\.done)?$/i.test(name)) {
       kind = "transcode";
     } else {
-      const lower = name.toLowerCase();
-      const matchedId =
-        byName.get(lower) ??
-        hashes.find((h) => lower.includes(h.hash))?.id;
-      if (matchedId) {
-        kind = "matched";
-        libraryItemId = matchedId;
-      } else {
-        kind = "orphan";
-      }
+      libraryItemId = matchEntryToItem(name, items);
+      kind = libraryItemId ? "matched" : "orphan";
     }
 
     return {
@@ -132,20 +178,49 @@ export function reconcile(): StorageEntry[] {
   });
 }
 
-// Delete a single cache entry from disk, with a hard guard against path escape.
-// Returns the bytes reclaimed.
-export function deleteCacheFolderFs(folderName: string): number {
-  const cachePath = getCachePath();
-  const target = resolve(cachePath, folderName);
-
-  // Must stay strictly inside the cache directory.
-  if (target === cachePath || !target.startsWith(cachePath + sep)) {
-    throw new Error(`Refusing to delete outside cache dir: ${folderName}`);
+// Bytes on disk per library item id — one cache scan, reused for per-item and
+// per-folder totals in the library API.
+export function getUsageByItem(): Map<string, number> {
+  const usage = new Map<string, number>();
+  for (const entry of reconcile()) {
+    if (!entry.libraryItemId) continue;
+    usage.set(entry.libraryItemId, (usage.get(entry.libraryItemId) ?? 0) + entry.sizeBytes);
   }
+  return usage;
+}
+
+// Guard shared by every delete path: the resolved target must sit strictly
+// inside the cache directory.
+function resolveInsideCache(relPath: string): string {
+  const cachePath = getCachePath();
+  const target = resolve(cachePath, relPath);
+  if (target === cachePath || !target.startsWith(cachePath + sep)) {
+    throw new Error(`Refusing to delete outside cache dir: ${relPath}`);
+  }
+  return target;
+}
+
+// Delete a single cache entry from disk. Returns the bytes reclaimed.
+export function deleteCacheFolderFs(folderName: string): number {
+  const target = resolveInsideCache(folderName);
   if (!existsSync(target)) return 0;
 
   const reclaimed = entrySize(target);
   rmSync(target, { recursive: true, force: true });
+  return reclaimed;
+}
+
+// Delete one file inside the cache dir (a single episode of a season pack).
+// Returns the bytes reclaimed.
+export function deleteCacheFile(relPath: string): number {
+  const target = resolveInsideCache(relPath);
+  if (!existsSync(target)) return 0;
+  if (!statSync(target).isFile()) {
+    throw new Error(`Not a file: ${relPath}`);
+  }
+
+  const reclaimed = allocatedSize(target);
+  unlinkSync(target);
   return reclaimed;
 }
 

@@ -1,10 +1,15 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import type { LibraryItem, LibraryData } from "@/types";
+import type { LibraryListResponse, LibraryCategory } from "@/types";
+
+interface ReclaimResult {
+  reclaimedBytes?: number;
+  reclaimedFormatted?: string;
+}
 
 export function useLibrary() {
-  const [data, setData] = useState<LibraryData | null>(null);
+  const [data, setData] = useState<LibraryListResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
@@ -12,7 +17,7 @@ export function useLibrary() {
     try {
       const res = await fetch("/api/library");
       if (!res.ok) throw new Error("Failed to fetch library");
-      const json: LibraryData = await res.json();
+      const json: LibraryListResponse = await res.json();
       setData(json);
       setError(null);
     } catch (e) {
@@ -28,11 +33,15 @@ export function useLibrary() {
 
   const mutate = useCallback(() => load(), [load]);
 
+  // --- Items ---
+
   const addItem = async (item: {
     name: string;
     magnet: string;
     quality?: string;
     size?: string;
+    folderId?: string | null;
+    category?: LibraryCategory;
   }) => {
     const res = await fetch("/api/library", {
       method: "POST",
@@ -49,7 +58,13 @@ export function useLibrary() {
 
   const updateItem = async (
     id: string,
-    updates: { name?: string; quality?: string; size?: string }
+    updates: {
+      name?: string;
+      quality?: string;
+      size?: string;
+      folderId?: string | null;
+      category?: LibraryCategory;
+    }
   ) => {
     const res = await fetch(`/api/library/${id}`, {
       method: "PUT",
@@ -61,6 +76,11 @@ export function useLibrary() {
     return res.json();
   };
 
+  const moveItem = (id: string, folderId: string | null) => updateItem(id, { folderId });
+
+  const setItemCategory = (id: string, category: LibraryCategory) =>
+    updateItem(id, { category });
+
   const deleteItem = async (id: string) => {
     const res = await fetch(`/api/library/${id}`, {
       method: "DELETE",
@@ -69,19 +89,84 @@ export function useLibrary() {
     await mutate();
   };
 
-  const clearItemCache = async (id: string) => {
+  const clearItemCache = async (id: string): Promise<ReclaimResult> => {
     const res = await fetch(`/api/library/${id}/cache`, { method: "DELETE" });
     if (!res.ok) throw new Error("Failed to clear cache");
+    const json = await res.json();
+    await mutate();
+    return json;
+  };
+
+  // --- Folders ---
+
+  const createFolder = async (name: string, category?: LibraryCategory) => {
+    const res = await fetch("/api/folders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, category }),
+    });
+    if (!res.ok) throw new Error("Failed to create folder");
+    const json = await res.json();
+    await mutate();
+    return json;
+  };
+
+  const updateFolder = async (
+    id: string,
+    updates: { name?: string; category?: LibraryCategory }
+  ) => {
+    const res = await fetch(`/api/folders/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updates),
+    });
+    if (!res.ok) throw new Error("Failed to update folder");
+    await mutate();
+    return res.json();
+  };
+
+  const renameFolder = (id: string, name: string) => updateFolder(id, { name });
+
+  const setFolderCategory = (id: string, category: LibraryCategory) =>
+    updateFolder(id, { category });
+
+  const deleteFolder = async (
+    id: string,
+    { deleteItems = false }: { deleteItems?: boolean } = {}
+  ): Promise<ReclaimResult> => {
+    const res = await fetch(`/api/folders/${id}${deleteItems ? "?deleteItems=1" : ""}`, {
+      method: "DELETE",
+    });
+    if (!res.ok) throw new Error("Failed to delete folder");
+    const json = await res.json();
+    await mutate();
+    return json;
+  };
+
+  const clearFolderCache = async (id: string): Promise<ReclaimResult> => {
+    const res = await fetch(`/api/folders/${id}/cache`, { method: "DELETE" });
+    if (!res.ok) throw new Error("Failed to clear folder cache");
+    const json = await res.json();
+    await mutate();
+    return json;
   };
 
   return {
     items: data?.items || [],
+    folders: data?.folders || [],
     isLoading,
     error,
     addItem,
     updateItem,
+    moveItem,
     deleteItem,
     clearItemCache,
+    setItemCategory,
+    createFolder,
+    renameFolder,
+    setFolderCategory,
+    deleteFolder,
+    clearFolderCache,
     refresh: mutate,
   };
 }

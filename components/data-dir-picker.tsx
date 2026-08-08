@@ -128,7 +128,7 @@ export function DataDirPicker() {
       )}
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="bg-zinc-900 border-zinc-800 max-w-lg">
+        <DialogContent className="bg-zinc-900 border-zinc-800 max-w-[calc(100%-1.5rem)] sm:max-w-lg p-4 sm:p-6">
           <DialogHeader>
             <DialogTitle>Choose Data Directory</DialogTitle>
           </DialogHeader>

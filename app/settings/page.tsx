@@ -70,7 +70,7 @@ export default function SettingsPage() {
   if (isLoading) {
     return (
       <main className="min-h-screen pt-14">
-        <div className="max-w-2xl mx-auto px-4 py-8">
+        <div className="max-w-2xl mx-auto px-4 py-6 sm:py-8">
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-6 w-6 animate-spin text-zinc-500" />
           </div>
@@ -81,7 +81,7 @@ export default function SettingsPage() {
 
   return (
     <main className="min-h-screen pt-14">
-      <div className="max-w-2xl mx-auto px-4 py-8">
+      <div className="max-w-2xl mx-auto px-4 py-6 sm:py-8">
         {/* Header */}
         <div className="mb-8">
           <h1 className="text-2xl font-bold">Settings</h1>
@@ -116,7 +116,7 @@ export default function SettingsPage() {
                 </p>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="text-sm text-zinc-400 mb-2 block">
                     Download Limit (bytes/s)
@@ -218,7 +218,7 @@ export default function SettingsPage() {
                 <label className="text-sm text-zinc-400 mb-2 block">
                   Prebuffer Mode
                 </label>
-                <div className="flex gap-3">
+                <div className="flex flex-col sm:flex-row gap-3">
                   {[
                     {
                       value: "strict",
@@ -255,7 +255,7 @@ export default function SettingsPage() {
           </Card>
 
           {/* Actions */}
-          <div className="flex items-center justify-between pt-4">
+          <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3 pt-4">
             <Button
               variant="outline"
               onClick={handleReset}

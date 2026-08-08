@@ -67,7 +67,8 @@ export function StoragePanel() {
         </div>
         <button
           onClick={() => refresh()}
-          className="text-zinc-600 hover:text-zinc-300 transition-colors"
+          className="text-zinc-600 hover:text-zinc-300 transition-colors h-9 w-9 flex items-center justify-center -mr-2"
+          aria-label="Refresh storage report"
           title="Refresh"
         >
           <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
@@ -77,7 +78,7 @@ export function StoragePanel() {
       {/* Disk space line */}
       {disk && disk.totalBytes > 0 && (
         <div className="mb-3">
-          <div className="flex justify-between text-xs text-zinc-500 mb-1">
+          <div className="flex justify-between gap-2 flex-wrap text-xs text-zinc-500 mb-1">
             <span>
               {formatBytes(disk.freeBytes)} free{freePct !== null ? ` (${freePct}%)` : ""}
             </span>
@@ -112,7 +113,7 @@ export function StoragePanel() {
           variant="outline"
           onClick={handleReclaimAll}
           disabled={busy !== null}
-          className="w-full mb-3 border-red-900/60 text-red-300 hover:bg-red-950/40 hover:text-red-200"
+          className="w-full mb-3 h-11 border-red-900/60 text-red-300 hover:bg-red-950/40 hover:text-red-200"
         >
           {busy === "__all__" ? (
             <Loader2 className="h-4 w-4 animate-spin mr-2" />
@@ -153,7 +154,8 @@ export function StoragePanel() {
                       variant="ghost"
                       onClick={() => handleDeleteOne(entry)}
                       disabled={busy !== null}
-                      className="h-7 w-7 text-zinc-600 hover:text-red-400 shrink-0"
+                      className="h-10 w-10 text-zinc-600 hover:text-red-400 shrink-0"
+                      aria-label={`Delete ${entry.name} from disk`}
                       title="Delete from disk"
                     >
                       {busy === entry.name ? (

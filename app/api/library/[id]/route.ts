@@ -9,6 +9,11 @@ const UpdateItemSchema = z.object({
   quality: z.string().optional(),
   size: z.string().optional(),
   fileIndex: z.number().int().nonnegative().optional(),
+  // null moves the item out of its folder, back to the top level.
+  folderId: z.string().nullable().optional(),
+  category: z.enum(["movie", "series"]).optional(),
+  cacheFolder: z.string().optional(),
+  infoHash: z.string().optional(),
 });
 
 // GET /api/library/[id] - Get single item

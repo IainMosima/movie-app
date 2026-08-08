@@ -1,25 +1,29 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { FilePicker } from "@/components/file-picker";
+import { FolderCard } from "@/components/folder-card";
+import { FolderDialog } from "@/components/folder-dialog";
+import { LibraryCard } from "@/components/library-card";
+import { LibraryToolbar, type CategoryFilter } from "@/components/library-toolbar";
 import { MagnetInput } from "@/components/magnet-input";
 import { StoragePanel } from "@/components/storage-panel";
 import { useLibrary } from "@/hooks/use-library";
 import {
-  Play,
-  Trash2,
   Plus,
   Film,
+  Tv,
   Loader2,
   BookmarkPlus,
-  Eraser,
+  FolderPlus,
+  SearchX,
 } from "lucide-react";
 import { isValidTorrentInput, extractTitleFromInput } from "@/lib/torrent-utils";
+import { detectCategory } from "@/lib/category";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogContent,
@@ -28,11 +32,60 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import type { LibraryItem } from "@/types";
+import type { LibraryItemWithUsage, LibraryCategory } from "@/types";
+
+/** Movies / Series segmented picker used in both create dialogs. */
+function CategoryPicker({
+  value,
+  onChange,
+}: {
+  value: LibraryCategory;
+  onChange: (c: LibraryCategory) => void;
+}) {
+  const options: { value: LibraryCategory; label: string; icon: typeof Film }[] = [
+    { value: "movie", label: "Movie", icon: Film },
+    { value: "series", label: "Series", icon: Tv },
+  ];
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      {options.map(({ value: v, label, icon: Icon }) => (
+        <button
+          key={v}
+          type="button"
+          onClick={() => onChange(v)}
+          aria-pressed={value === v}
+          className={cn(
+            "h-11 rounded-lg border text-sm flex items-center justify-center gap-2 transition-colors",
+            value === v
+              ? "bg-purple-600 border-purple-500 text-white"
+              : "bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-zinc-200"
+          )}
+        >
+          <Icon className="h-4 w-4" />
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 export default function HomePage() {
   const router = useRouter();
-  const { items, isLoading: libraryLoading, addItem, deleteItem, clearItemCache } = useLibrary();
+  const {
+    items,
+    folders,
+    isLoading: libraryLoading,
+    addItem,
+    deleteItem,
+    clearItemCache,
+    moveItem,
+    setItemCategory,
+    createFolder,
+    renameFolder,
+    setFolderCategory,
+    deleteFolder,
+    clearFolderCache,
+  } = useLibrary();
 
   // File picker state
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -43,13 +96,71 @@ export default function HomePage() {
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [newName, setNewName] = useState("");
   const [newMagnet, setNewMagnet] = useState("");
+  const [newItemFolderId, setNewItemFolderId] = useState<string>("");
+  const [newItemCategory, setNewItemCategory] = useState<LibraryCategory | null>(null);
   const [isAdding, setIsAdding] = useState(false);
+
+  // Folder state
+  const [openFolderId, setOpenFolderId] = useState<string | null>(null);
+  const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const [newFolderCategory, setNewFolderCategory] = useState<LibraryCategory | null>(null);
+  const [isCreatingFolder, setIsCreatingFolder] = useState(false);
+
+  // Browse state
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<CategoryFilter>("all");
 
   const [isLoadingPlay, setIsLoadingPlay] = useState(false);
   const [vlcUrl, setVlcUrl] = useState<string | null>(null);
   const [vlcCopied, setVlcCopied] = useState(false);
   // When VLC mode is active, file picker uses this callback instead of navigating
   const [vlcPickerCallback, setVlcPickerCallback] = useState<((fileIndex: number) => void) | null>(null);
+
+  const openFolder = folders.find((f) => f.id === openFolderId) ?? null;
+
+  // Category is auto-detected from what you type until you override it.
+  const effectiveNewItemCategory = newItemCategory ?? detectCategory(newName, newMagnet);
+  const effectiveNewFolderCategory = newFolderCategory ?? detectCategory(newFolderName);
+
+  // --- Search + category filtering -----------------------------------------
+
+  const matches = (name: string) =>
+    name.toLowerCase().includes(query.trim().toLowerCase());
+
+  // Count the rows actually listed: folders, plus items not filed into one.
+  const counts = useMemo(() => {
+    const rows = [
+      ...folders.map((f) => f.category),
+      ...items.filter((i) => !i.folderId).map((i) => i.category),
+    ];
+    const movie = rows.filter((c) => c === "movie").length;
+    return {
+      all: rows.length,
+      movie,
+      series: rows.length - movie,
+    } as Record<CategoryFilter, number>;
+  }, [items, folders]);
+
+  const visibleFolders = folders.filter(
+    (f) =>
+      (filter === "all" || f.category === filter) &&
+      // A folder also matches when something inside it matches the search.
+      (matches(f.name) ||
+        items.some((i) => i.folderId === f.id && matches(i.name)))
+  );
+
+  const visibleLooseItems = items.filter(
+    (i) => !i.folderId && (filter === "all" || i.category === filter) && matches(i.name)
+  );
+
+  const isFiltering = query.trim().length > 0 || filter !== "all";
+  const nothingMatched =
+    !libraryLoading &&
+    isFiltering &&
+    visibleFolders.length === 0 &&
+    visibleLooseItems.length === 0;
+  const libraryEmpty = !libraryLoading && items.length === 0 && folders.length === 0;
 
   // Handle returning from watch page - check localStorage for last show
   useEffect(() => {
@@ -177,7 +288,7 @@ export default function HomePage() {
     }
 
     // Persist chosen episode index to the library item
-    const libItem = items.find((i: LibraryItem) => i.magnet === selectedMagnet);
+    const libItem = items.find((i: LibraryItemWithUsage) => i.magnet === selectedMagnet);
     if (libItem) {
       fetch(`/api/library/${libItem.id}`, {
         method: "PUT",
@@ -206,15 +317,38 @@ export default function HomePage() {
       await addItem({
         name: newName.trim(),
         magnet: newMagnet.trim(),
+        folderId: newItemFolderId || null,
+        category: effectiveNewItemCategory,
       });
-      toast.success("Added to library");
+      const folderName = folders.find((f) => f.id === newItemFolderId)?.name;
+      toast.success(folderName ? `Added to "${folderName}"` : "Added to library");
       setNewName("");
       setNewMagnet("");
+      setNewItemCategory(null);
       setAddDialogOpen(false);
-    } catch (err) {
+    } catch {
       toast.error("Failed to add to library");
     } finally {
       setIsAdding(false);
+    }
+  };
+
+  const handleCreateFolder = async () => {
+    const name = newFolderName.trim();
+    if (!name) return;
+
+    setIsCreatingFolder(true);
+    try {
+      const folder = await createFolder(name, effectiveNewFolderCategory);
+      toast.success(`Created folder "${name}"`);
+      setNewFolderName("");
+      setNewFolderCategory(null);
+      setNewFolderOpen(false);
+      if (folder?.id) setOpenFolderId(folder.id);
+    } catch {
+      toast.error("Failed to create folder");
+    } finally {
+      setIsCreatingFolder(false);
     }
   };
 
@@ -229,8 +363,12 @@ export default function HomePage() {
 
   const handleClearCache = async (id: string, name: string) => {
     try {
-      await clearItemCache(id);
-      toast.success(`Cache cleared for "${name}"`);
+      const res = await clearItemCache(id);
+      toast.success(
+        res.reclaimedFormatted && res.reclaimedBytes
+          ? `Reclaimed ${res.reclaimedFormatted} from "${name}"`
+          : `Cache cleared for "${name}"`
+      );
     } catch {
       toast.error("Failed to clear cache");
     }
@@ -256,10 +394,10 @@ export default function HomePage() {
       {/* VLC stream URL popup */}
       {vlcUrl && (
         <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center px-4" onClick={() => setVlcUrl(null)}>
-          <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 max-w-lg w-full shadow-2xl" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-5 sm:p-6 max-w-lg w-full shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-base font-semibold text-white">Stream URL</h2>
-              <button onClick={() => { setVlcUrl(null); setVlcCopied(false); }} className="text-zinc-500 hover:text-white transition-colors text-lg leading-none">✕</button>
+              <button onClick={() => { setVlcUrl(null); setVlcCopied(false); }} className="text-zinc-500 hover:text-white transition-colors text-lg leading-none h-9 w-9">✕</button>
             </div>
             <p className="text-xs text-zinc-500 mb-3">Paste this into VLC → Media → Open Network Stream</p>
             <div
@@ -273,9 +411,9 @@ export default function HomePage() {
             >
               {vlcUrl}
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-col sm:flex-row gap-2">
               <Button
-                className="flex-1"
+                className="flex-1 h-11"
                 onClick={() => {
                   navigator.clipboard.writeText(vlcUrl);
                   setVlcCopied(true);
@@ -284,7 +422,7 @@ export default function HomePage() {
               >
                 {vlcCopied ? "Copied!" : "Copy URL"}
               </Button>
-              <Button variant="outline" className="border-zinc-700" onClick={() => { setVlcUrl(null); setVlcCopied(false); }}>
+              <Button variant="outline" className="border-zinc-700 h-11" onClick={() => { setVlcUrl(null); setVlcCopied(false); }}>
                 Close
               </Button>
             </div>
@@ -292,16 +430,16 @@ export default function HomePage() {
         </div>
       )}
 
-      <div className="max-w-3xl mx-auto px-4 py-8">
+      <div className="max-w-3xl mx-auto px-4 py-6 sm:py-8">
         {/* Header */}
-        <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold bg-gradient-to-r from-white to-zinc-400 bg-clip-text text-transparent">
+        <div className="text-center mb-6 sm:mb-8">
+          <h1 className="text-3xl sm:text-4xl font-bold bg-gradient-to-r from-white to-zinc-400 bg-clip-text text-transparent">
             <span className="mr-2">🛸</span>Spaceflix
           </h1>
         </div>
 
         {/* Quick Play */}
-        <div className="mb-8">
+        <div className="mb-6 sm:mb-8">
           <div className="flex items-center gap-2 mb-3">
             <div className="h-px flex-1 bg-zinc-800" />
             <span className="text-xs text-zinc-600 uppercase tracking-wider">
@@ -313,50 +451,132 @@ export default function HomePage() {
         </div>
 
         {/* Storage */}
-        <div className="mb-8">
+        <div className="mb-6 sm:mb-8">
           <StoragePanel />
         </div>
 
         {/* Library */}
         <div>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-zinc-300">My Library</h2>
-            <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
-              <DialogTrigger asChild>
-                <Button size="sm" className="gap-1.5">
-                  <Plus className="h-4 w-4" />
-                  Add
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="bg-zinc-900 border-zinc-800">
-                <DialogHeader>
-                  <DialogTitle>Add to Library</DialogTitle>
-                </DialogHeader>
-                <div className="space-y-4 py-4">
-                  <div>
-                    <label className="text-sm text-zinc-400 mb-2 block">
-                      Name
-                    </label>
-                    <Input
-                      value={newName}
-                      onChange={(e) => setNewName(e.target.value)}
-                      placeholder="Movie or Show Name"
-                      className="bg-zinc-800 border-zinc-700"
-                    />
+          <div className="flex items-center justify-between gap-2 mb-3">
+            <h2 className="text-lg font-semibold text-zinc-300 shrink-0">My Library</h2>
+            <div className="flex items-center gap-2">
+              <Dialog open={newFolderOpen} onOpenChange={setNewFolderOpen}>
+                <DialogTrigger asChild>
+                  <Button size="sm" variant="outline" className="gap-1.5 h-10 border-zinc-700">
+                    <FolderPlus className="h-4 w-4" />
+                    <span className="hidden sm:inline">New Folder</span>
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="bg-zinc-900 border-zinc-800 p-5 sm:p-6">
+                  <DialogHeader>
+                    <DialogTitle>New Folder</DialogTitle>
+                  </DialogHeader>
+                  <div className="py-2 space-y-4">
+                    <div>
+                      <label className="text-sm text-zinc-400 mb-2 block">
+                        Folder name
+                      </label>
+                      <Input
+                        value={newFolderName}
+                        onChange={(e) => setNewFolderName(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && handleCreateFolder()}
+                        placeholder="e.g. Invincible S4, or Alien Collection"
+                        className="bg-zinc-800 border-zinc-700 h-11 text-base sm:text-sm"
+                        autoFocus
+                      />
+                    </div>
+                    <div>
+                      <label className="text-sm text-zinc-400 mb-2 block">
+                        Category
+                      </label>
+                      <CategoryPicker
+                        value={effectiveNewFolderCategory}
+                        onChange={setNewFolderCategory}
+                      />
+                    </div>
+                    <p className="text-xs text-zinc-600">
+                      Hold a series or a movie set together — add one magnet per
+                      episode, and clear each one&apos;s cache when you&apos;re done with it.
+                    </p>
                   </div>
-                  <div>
-                    <label className="text-sm text-zinc-400 mb-2 block">
-                      Magnet Link
-                    </label>
-                    <Input
-                      value={newMagnet}
-                      onChange={(e) => setNewMagnet(e.target.value)}
-                      placeholder="Input URL..."
-                      className="bg-zinc-800 border-zinc-700 font-mono text-xs"
-                    />
+                  <Button
+                    onClick={handleCreateFolder}
+                    disabled={!newFolderName.trim() || isCreatingFolder}
+                    className="h-11 w-full sm:w-auto sm:ml-auto"
+                  >
+                    {isCreatingFolder ? (
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    ) : (
+                      <FolderPlus className="h-4 w-4 mr-2" />
+                    )}
+                    Create
+                  </Button>
+                </DialogContent>
+              </Dialog>
+
+              <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
+                <DialogTrigger asChild>
+                  <Button size="sm" className="gap-1.5 h-10">
+                    <Plus className="h-4 w-4" />
+                    Add
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="bg-zinc-900 border-zinc-800 p-5 sm:p-6 max-h-[90vh] overflow-y-auto">
+                  <DialogHeader>
+                    <DialogTitle>Add to Library</DialogTitle>
+                  </DialogHeader>
+                  <div className="space-y-4 py-2">
+                    <div>
+                      <label className="text-sm text-zinc-400 mb-2 block">
+                        Name
+                      </label>
+                      <Input
+                        value={newName}
+                        onChange={(e) => setNewName(e.target.value)}
+                        placeholder="Movie or Show Name"
+                        className="bg-zinc-800 border-zinc-700 h-11 text-base sm:text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-sm text-zinc-400 mb-2 block">
+                        Magnet Link
+                      </label>
+                      <Input
+                        value={newMagnet}
+                        onChange={(e) => setNewMagnet(e.target.value)}
+                        placeholder="Input URL..."
+                        className="bg-zinc-800 border-zinc-700 font-mono text-xs h-11"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-sm text-zinc-400 mb-2 block">
+                        Category
+                      </label>
+                      <CategoryPicker
+                        value={effectiveNewItemCategory}
+                        onChange={setNewItemCategory}
+                      />
+                    </div>
+                    {folders.length > 0 && (
+                      <div>
+                        <label className="text-sm text-zinc-400 mb-2 block">
+                          Folder
+                        </label>
+                        <select
+                          value={newItemFolderId}
+                          onChange={(e) => setNewItemFolderId(e.target.value)}
+                          className="w-full h-11 rounded-md bg-zinc-800 border border-zinc-700 px-3 text-base sm:text-sm text-zinc-200"
+                        >
+                          <option value="">No folder</option>
+                          {folders.map((f) => (
+                            <option key={f.id} value={f.id}>
+                              {f.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
                   </div>
-                </div>
-                <div className="flex justify-end">
                   <Button
                     onClick={handleAddToLibrary}
                     disabled={
@@ -364,6 +584,7 @@ export default function HomePage() {
                       !isValidTorrentInput(newMagnet) ||
                       isAdding
                     }
+                    className="h-11 w-full sm:w-auto sm:ml-auto"
                   >
                     {isAdding ? (
                       <Loader2 className="h-4 w-4 animate-spin mr-2" />
@@ -372,10 +593,21 @@ export default function HomePage() {
                     )}
                     Save
                   </Button>
-                </div>
-              </DialogContent>
-            </Dialog>
+                </DialogContent>
+              </Dialog>
+            </div>
           </div>
+
+          {/* Search + category filters */}
+          {!libraryEmpty && (
+            <LibraryToolbar
+              query={query}
+              onQueryChange={setQuery}
+              filter={filter}
+              onFilterChange={setFilter}
+              counts={counts}
+            />
+          )}
 
           {/* Loading */}
           {libraryLoading && (
@@ -384,42 +616,92 @@ export default function HomePage() {
             </div>
           )}
 
-          {/* Empty state */}
-          {!libraryLoading && items.length === 0 && (
-            <div className="text-center py-12 bg-zinc-900/30 rounded-xl border border-zinc-800">
-              <Film className="h-12 w-12 text-zinc-700 mx-auto mb-4" />
-              <h3 className="font-medium text-zinc-400 mb-2">
-                No saved items yet
-              </h3>
-              <p className="text-sm text-zinc-600 mb-4">
-                Add magnet links to your library to access them from any device
-              </p>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setAddDialogOpen(true)}
-                className="border-zinc-700"
-              >
-                <Plus className="h-4 w-4 mr-1.5" />
-                Add First Item
-              </Button>
+          {/* Folders */}
+          {visibleFolders.length > 0 && (
+            <div className="space-y-2 mb-3">
+              {visibleFolders.map((folder) => (
+                <FolderCard
+                  key={folder.id}
+                  folder={folder}
+                  onOpen={() => setOpenFolderId(folder.id)}
+                />
+              ))}
             </div>
           )}
 
-          {/* Library items */}
-          {!libraryLoading && items.length > 0 && (
+          {/* Loose library items (anything not filed into a folder) */}
+          {visibleLooseItems.length > 0 && (
             <div className="space-y-2">
-              {items.map((item) => (
+              {visibleLooseItems.map((item) => (
                 <LibraryCard
                   key={item.id}
                   item={item}
+                  folders={folders}
                   onPlay={() => handlePlayMagnet(item.magnet, item.name)}
                   onOpen={() => handleOpenListing(item.magnet, item.name)}
                   onDelete={() => handleDelete(item.id, item.name)}
                   onClearCache={() => handleClearCache(item.id, item.name)}
                   onVLC={() => handleVLC(item.magnet, item.name)}
+                  onMoveToFolder={(folderId) => moveItem(item.id, folderId)}
+                  onSetCategory={(category) => setItemCategory(item.id, category)}
                 />
               ))}
+            </div>
+          )}
+
+          {/* Nothing matched the current search/filter */}
+          {nothingMatched && (
+            <div className="text-center py-12 bg-zinc-900/30 rounded-xl border border-zinc-800">
+              <SearchX className="h-10 w-10 text-zinc-700 mx-auto mb-3" />
+              <h3 className="font-medium text-zinc-400 mb-1">No matches</h3>
+              <p className="text-sm text-zinc-600 mb-4 px-4">
+                Nothing here for{" "}
+                {query.trim() ? `“${query.trim()}”` : "this category"}.
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setQuery("");
+                  setFilter("all");
+                }}
+                className="border-zinc-700 h-10"
+              >
+                Clear filters
+              </Button>
+            </div>
+          )}
+
+          {/* Empty library */}
+          {libraryEmpty && (
+            <div className="text-center py-12 bg-zinc-900/30 rounded-xl border border-zinc-800">
+              <Film className="h-12 w-12 text-zinc-700 mx-auto mb-4" />
+              <h3 className="font-medium text-zinc-400 mb-2">
+                No saved items yet
+              </h3>
+              <p className="text-sm text-zinc-600 mb-4 px-4">
+                Add magnet links to your library to access them from any device
+              </p>
+              <div className="flex flex-col sm:flex-row gap-2 justify-center px-4">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setAddDialogOpen(true)}
+                  className="border-zinc-700 h-10"
+                >
+                  <Plus className="h-4 w-4 mr-1.5" />
+                  Add First Item
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setNewFolderOpen(true)}
+                  className="border-zinc-700 h-10"
+                >
+                  <FolderPlus className="h-4 w-4 mr-1.5" />
+                  Create a Folder
+                </Button>
+              </div>
             </div>
           )}
         </div>
@@ -435,110 +717,28 @@ export default function HomePage() {
           onSelectFile={handleSelectFile}
         />
       )}
-    </main>
-  );
-}
 
-function LibraryCard({
-  item,
-  onPlay,
-  onOpen,
-  onDelete,
-  onClearCache,
-  onVLC,
-}: {
-  item: LibraryItem;
-  onPlay: () => void;
-  onOpen: () => void;
-  onDelete: () => void;
-  onClearCache: () => void;
-  onVLC: () => void;
-}) {
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [isClearing, setIsClearing] = useState(false);
-
-  const handleDelete = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setIsDeleting(true);
-    await onDelete();
-  };
-
-  const handleClearCache = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setIsClearing(true);
-    await onClearCache();
-    setIsClearing(false);
-  };
-
-  return (
-    <Card
-      className="group p-4 bg-zinc-900/50 border-zinc-800 hover:bg-zinc-800/50 hover:border-zinc-700 transition-all cursor-pointer"
-      onClick={onOpen}
-    >
-      <div className="flex items-center gap-4">
-        <Button
-          size="icon"
-          className="h-12 w-12 rounded-lg bg-zinc-800 group-hover:bg-purple-600 transition-colors shrink-0"
-          onClick={(e) => {
-            e.stopPropagation();
-            onPlay();
+      {/* Folder modal */}
+      {openFolder && (
+        <FolderDialog
+          open={openFolderId !== null}
+          onClose={() => setOpenFolderId(null)}
+          folder={openFolder}
+          items={items.filter((i) => i.folderId === openFolder.id)}
+          onPlay={(item) => {
+            setOpenFolderId(null);
+            handlePlayMagnet(item.magnet, item.name);
           }}
-        >
-          <Play className="h-5 w-5 fill-current" />
-        </Button>
-
-        <div className="flex-1 min-w-0">
-          <h3 className="font-medium text-zinc-100 truncate group-hover:text-white">
-            {item.name}
-          </h3>
-          <p className="text-xs text-zinc-600 mt-1">
-            Added {new Date(item.addedAt).toLocaleDateString()}
-          </p>
-        </div>
-
-        {item.quality && (
-          <Badge className="shrink-0 bg-zinc-800 text-zinc-400">
-            {item.quality}
-          </Badge>
-        )}
-
-        <button
-          onClick={(e) => { e.stopPropagation(); onVLC(); }}
-          className="shrink-0 text-xs font-medium text-zinc-500 hover:text-orange-400 transition-all px-2 py-1 rounded hover:bg-orange-500/10"
-          title="Get stream URL for VLC"
-        >
-          VLC
-        </button>
-
-        <Button
-          size="icon"
-          variant="ghost"
-          onClick={handleClearCache}
-          disabled={isClearing}
-          className="h-8 w-8 text-zinc-600 hover:text-amber-400 shrink-0 transition-colors"
-          title="Clear cache (keeps in library)"
-        >
-          {isClearing ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Eraser className="h-4 w-4" />
-          )}
-        </Button>
-
-        <Button
-          size="icon"
-          variant="ghost"
-          onClick={handleDelete}
-          disabled={isDeleting}
-          className="h-8 w-8 text-zinc-600 hover:text-red-400 shrink-0 transition-colors"
-        >
-          {isDeleting ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Trash2 className="h-4 w-4" />
-          )}
-        </Button>
-      </div>
-    </Card>
+          onAddItem={(input) => addItem({ ...input, folderId: openFolder.id })}
+          onClearItemCache={(id) => clearItemCache(id)}
+          onDeleteItem={(id) => deleteItem(id)}
+          onMoveOut={(id) => moveItem(id, null)}
+          onClearFolderCache={() => clearFolderCache(openFolder.id)}
+          onRename={(name) => renameFolder(openFolder.id, name)}
+          onSetCategory={(category) => setFolderCategory(openFolder.id, category)}
+          onDeleteFolder={(opts) => deleteFolder(openFolder.id, opts)}
+        />
+      )}
+    </main>
   );
 }

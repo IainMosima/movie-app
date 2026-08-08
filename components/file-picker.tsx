@@ -33,6 +33,8 @@ interface TorrentFile {
   sizeFormatted: string;
   isVideo: boolean;
   extension: string;
+  cachedBytes: number;
+  cachedFormatted: string;
 }
 
 interface TorrentStatus {
@@ -65,6 +67,8 @@ export function FilePicker({
   const [files, setFiles] = useState<TorrentFile[]>([]);
   const [mainVideoIndex, setMainVideoIndex] = useState<number | null>(null);
   const [clearingIndex, setClearingIndex] = useState<number | null>(null);
+  const [cachedTotal, setCachedTotal] = useState({ bytes: 0, formatted: "0 B" });
+  const [isClearingAll, setIsClearingAll] = useState(false);
 
   // Status polling
   const [status, setStatus] = useState<TorrentStatus | null>(null);
@@ -185,6 +189,10 @@ export function FilePicker({
       setInfoHash(data.infoHash);
       setFiles(data.files);
       setMainVideoIndex(data.mainVideoIndex);
+      setCachedTotal({
+        bytes: data.cachedTotalBytes ?? 0,
+        formatted: data.cachedTotalFormatted ?? "0 B",
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to fetch files");
     } finally {
@@ -195,6 +203,27 @@ export function FilePicker({
     }
   };
 
+  // Re-read on-disk sizes after a clear. The torrent is already active at this
+  // point, so this returns immediately — no loading spinner needed.
+  const refreshSizes = async () => {
+    try {
+      const res = await fetch("/api/torrent/files", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ magnet }),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      setFiles(data.files);
+      setCachedTotal({
+        bytes: data.cachedTotalBytes ?? 0,
+        formatted: data.cachedTotalFormatted ?? "0 B",
+      });
+    } catch {
+      // Leave the last known sizes on screen
+    }
+  };
+
   const handlePlay = (fileIndex: number) => {
     if (infoHash) {
       const file = files[fileIndex];
@@ -202,14 +231,44 @@ export function FilePicker({
     }
   };
 
-  const handleClear = async (e: React.MouseEvent, fileIndex: number) => {
+  const clearFile = async (file: TorrentFile) => {
+    await fetch(
+      `/api/torrent/${infoHash}/file/${file.index}/cache?path=${encodeURIComponent(file.path)}`,
+      { method: "DELETE" }
+    );
+  };
+
+  const handleClear = async (e: React.MouseEvent, file: TorrentFile) => {
     e.stopPropagation();
     if (!infoHash) return;
-    setClearingIndex(fileIndex);
+    setClearingIndex(file.index);
     try {
-      await fetch(`/api/torrent/${infoHash}/file/${fileIndex}/cache`, { method: "DELETE" });
+      await clearFile(file);
+      await refreshSizes();
     } finally {
       setClearingIndex(null);
+    }
+  };
+
+  const handleClearAll = async () => {
+    if (!infoHash) return;
+    const cached = files.filter((f) => f.cachedBytes > 0);
+    if (cached.length === 0) return;
+    if (
+      !window.confirm(
+        `Clear ${cachedTotal.formatted} of cached bytes for "${torrentName}"? It re-downloads on next play.`
+      )
+    )
+      return;
+
+    setIsClearingAll(true);
+    try {
+      for (const file of cached) {
+        await clearFile(file);
+      }
+      await refreshSizes();
+    } finally {
+      setIsClearingAll(false);
     }
   };
 
@@ -231,7 +290,7 @@ export function FilePicker({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="bg-zinc-900 border-zinc-800 max-w-2xl max-h-[85vh] h-[85vh] flex flex-col">
+      <DialogContent className="bg-zinc-900 border-zinc-800 max-w-[calc(100%-1.5rem)] sm:max-w-2xl h-[88vh] sm:h-[85vh] flex flex-col p-4 sm:p-6">
         <DialogHeader>
           <DialogTitle className="pr-8 truncate">{title}</DialogTitle>
         </DialogHeader>
@@ -300,22 +359,44 @@ export function FilePicker({
 
         {!isLoading && !error && files.length > 0 && (
           <>
-            {/* Torrent name */}
+            {/* Torrent name + what it currently costs on disk */}
             <div className="px-1 pb-2 border-b border-zinc-800">
               <p className="text-sm text-zinc-400 truncate">
                 <HardDrive className="h-3.5 w-3.5 inline mr-1.5" />
                 {torrentName}
               </p>
-              <p className="text-xs text-zinc-600 mt-1">
-                {files.length} file{files.length !== 1 ? "s" : ""} •{" "}
-                {videoFiles.length} video{videoFiles.length !== 1 ? "s" : ""}
-              </p>
+              <div className="flex items-center justify-between gap-2 flex-wrap mt-1">
+                <p className="text-xs text-zinc-600">
+                  {files.length} file{files.length !== 1 ? "s" : ""} •{" "}
+                  {videoFiles.length} video{videoFiles.length !== 1 ? "s" : ""} •{" "}
+                  <span className={cachedTotal.bytes > 0 ? "text-amber-500/90" : ""}>
+                    {cachedTotal.formatted} on disk
+                  </span>
+                </p>
+                {cachedTotal.bytes > 0 && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleClearAll}
+                    disabled={isClearingAll || clearingIndex !== null}
+                    className="shrink-0 h-7 border-amber-900/60 text-amber-300 hover:bg-amber-950/40 hover:text-amber-200"
+                  >
+                    {isClearingAll ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+                    ) : (
+                      <Eraser className="h-3.5 w-3.5 mr-1.5" />
+                    )}
+                    Clear all
+                  </Button>
+                )}
+              </div>
             </div>
 
             {/* Scroll container with TV-friendly buttons */}
             <div className="flex-1 flex gap-2 min-h-0">
-              {/* Scroll buttons - left side (TV-friendly) */}
-              <div className="flex flex-col justify-center gap-3 py-4">
+              {/* Scroll buttons — for TV remotes. Hidden on touch screens, where
+                  they'd eat a third of the width and swiping works anyway. */}
+              <div className="hidden sm:flex flex-col justify-center gap-3 py-4">
                 <button
                   type="button"
                   onClick={() => scrollBy(-250)}
@@ -386,16 +467,16 @@ export function FilePicker({
                           >
                             <button
                               onClick={() => handlePlay(file.index)}
-                              className="flex flex-1 items-center gap-4 p-4 text-left hover:bg-purple-600/20 focus:bg-purple-600/20 focus:outline-none rounded-xl min-w-0"
+                              className="flex flex-1 items-center gap-3 sm:gap-4 p-3 sm:p-4 text-left hover:bg-purple-600/20 focus:bg-purple-600/20 focus:outline-none rounded-xl min-w-0"
                             >
-                              <div className="h-12 w-12 rounded-xl flex items-center justify-center shrink-0 bg-zinc-800 group-hover:bg-purple-600 transition-colors">
-                                <Icon className="h-6 w-6" />
+                              <div className="h-11 w-11 sm:h-12 sm:w-12 rounded-xl flex items-center justify-center shrink-0 bg-zinc-800 group-hover:bg-purple-600 transition-colors">
+                                <Icon className="h-5 w-5 sm:h-6 sm:w-6" />
                               </div>
                               <div className="flex-1 min-w-0">
-                                <p className="text-base text-zinc-200 truncate font-medium">
+                                <p className="text-sm sm:text-base text-zinc-200 truncate font-medium">
                                   {file.name}
                                 </p>
-                                <div className="flex items-center gap-2 mt-1">
+                                <div className="flex items-center gap-2 mt-1 flex-wrap">
                                   <span className="text-sm text-zinc-500">
                                     {file.sizeFormatted}
                                   </span>
@@ -405,6 +486,11 @@ export function FilePicker({
                                   >
                                     {file.extension}
                                   </Badge>
+                                  {file.cachedBytes > 0 && (
+                                    <span className="text-xs text-amber-500/90">
+                                      {file.cachedFormatted} on disk
+                                    </span>
+                                  )}
                                   {isMain && (
                                     <span className="flex items-center gap-1 text-xs text-amber-500">
                                       <Star className="h-3.5 w-3.5 fill-current" />
@@ -413,13 +499,17 @@ export function FilePicker({
                                   )}
                                 </div>
                               </div>
-                              <Play className="h-6 w-6 text-zinc-600 group-hover:text-purple-400 shrink-0 transition-colors" />
+                              <Play className="hidden sm:block h-6 w-6 text-zinc-600 group-hover:text-purple-400 shrink-0 transition-colors" />
                             </button>
                             <button
-                              onClick={(e) => handleClear(e, file.index)}
-                              disabled={isClearing}
-                              className="shrink-0 h-10 w-10 flex items-center justify-center rounded-lg text-zinc-500 hover:text-amber-400 hover:bg-amber-500/10 transition-colors mr-2"
-                              title="Clear cached bytes (re-downloads on next play)"
+                              onClick={(e) => handleClear(e, file)}
+                              disabled={isClearing || isClearingAll || file.cachedBytes === 0}
+                              className="shrink-0 h-11 w-11 flex items-center justify-center rounded-lg text-zinc-500 hover:text-amber-400 hover:bg-amber-500/10 disabled:opacity-30 disabled:hover:text-zinc-500 disabled:hover:bg-transparent transition-colors mr-1 sm:mr-2"
+                              title={
+                                file.cachedBytes > 0
+                                  ? `Clear ${file.cachedFormatted} of cached bytes (re-downloads on next play)`
+                                  : "Nothing cached for this episode"
+                              }
                             >
                               {isClearing ? (
                                 <Loader2 className="h-4 w-4 animate-spin" />

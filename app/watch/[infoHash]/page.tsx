@@ -31,6 +31,11 @@ export default function WatchPage({ params }: WatchPageProps) {
   const [peersReady, setPeersReady] = useState(false);
   const [peers, setPeers] = useState(0);
   const [dlSpeed, setDlSpeed] = useState(0);
+  // Relative cache path of the episode being watched — lets the clear-on-exit
+  // prompt reclaim its bytes even if the worker has since gone away.
+  const [filePath, setFilePath] = useState<string | null>(null);
+  const [showClearPrompt, setShowClearPrompt] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
 
   // Get or create session + resolve direct stream URL
   useEffect(() => {
@@ -101,10 +106,18 @@ export default function WatchPage({ params }: WatchPageProps) {
         const data = await res.json();
         const torrent = data.torrents?.find(
           (t: { infoHash: string }) => t.infoHash.toLowerCase() === infoHash.toLowerCase()
-        );
+        ) as
+          | {
+              numPeers: number;
+              downloadSpeed: number;
+              files?: { path: string }[];
+            }
+          | undefined;
         if (!torrent) return;
         setPeers(torrent.numPeers);
         setDlSpeed(torrent.downloadSpeed);
+        const file = torrent.files?.[fileIndex ? parseInt(fileIndex, 10) : 0];
+        if (file?.path) setFilePath(file.path);
         if (torrent.numPeers >= 1) setPeersReady(true);
       } catch {}
     };
@@ -112,7 +125,7 @@ export default function WatchPage({ params }: WatchPageProps) {
     poll();
     const id = setInterval(poll, 1000);
     return () => clearInterval(id);
-  }, [peersReady, infoHash]);
+  }, [peersReady, infoHash, fileIndex]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -211,9 +224,31 @@ export default function WatchPage({ params }: WatchPageProps) {
     return () => clearTimeout(timer);
   }, [infoHash]);
 
+  // Closing the player is the natural "I'm done with this episode" moment, so
+  // offer to reclaim its bytes right there. Nothing is deleted unless asked.
   const handleClose = useCallback(() => {
+    setShowClearPrompt(true);
+  }, []);
+
+  const handleKeep = useCallback(() => {
     router.push("/");
   }, [router]);
+
+  const handleClearAndClose = useCallback(async () => {
+    setIsClearing(true);
+    try {
+      const index = fileIndex ?? "0";
+      const query = filePath ? `?path=${encodeURIComponent(filePath)}` : "";
+      await fetch(`/api/torrent/${infoHash}/file/${index}/cache${query}`, {
+        method: "DELETE",
+      });
+    } catch {
+      // Fall through — the storage panel can still reclaim it later
+    } finally {
+      setIsClearing(false);
+      router.push("/");
+    }
+  }, [fileIndex, filePath, infoHash, router]);
 
   // Show connecting screen until we have peers, a stream URL, and probe has completed
   if (!peersReady || !streamUrl || !probeComplete) {
@@ -241,7 +276,7 @@ export default function WatchPage({ params }: WatchPageProps) {
                 Open in VLC
               </Button>
             )}
-            <Button variant="ghost" size="sm" onClick={handleClose} className="text-zinc-500">
+            <Button variant="ghost" size="sm" onClick={handleKeep} className="text-zinc-500">
               Go back
             </Button>
           </div>
@@ -260,6 +295,42 @@ export default function WatchPage({ params }: WatchPageProps) {
         subtitles={subtitles}
         fallbackDuration={probedDuration ?? undefined}
       />
+
+      {showClearPrompt && (
+        <div className="fixed inset-0 z-[60] bg-black/85 flex items-center justify-center px-4">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 max-w-sm w-full shadow-2xl">
+            <h2 className="text-base font-semibold text-white mb-1">Done with this one?</h2>
+            <p className="text-sm text-zinc-500 mb-5">
+              Clearing frees the disk space it&apos;s using now. It stays in your
+              library and re-downloads if you play it again.
+            </p>
+            <div className="flex flex-col gap-2">
+              <Button onClick={handleClearAndClose} disabled={isClearing}>
+                {isClearing ? (
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                ) : null}
+                Clear this episode &amp; exit
+              </Button>
+              <Button
+                variant="outline"
+                onClick={handleKeep}
+                disabled={isClearing}
+                className="border-zinc-700"
+              >
+                Keep it &amp; exit
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => setShowClearPrompt(false)}
+                disabled={isClearing}
+                className="text-zinc-500"
+              >
+                Back to video
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

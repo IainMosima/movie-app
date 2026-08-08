@@ -4,13 +4,28 @@ export function extractInfoHashFromMagnet(magnet: string): string | null {
   return null;
 }
 
-export async function clearFileFromWorker(infoHash: string, fileIndex: number): Promise<void> {
+/**
+ * Ask the worker to purge one file's bytes (it also flips the piece bitfield so
+ * the file re-downloads cleanly if re-selected). Returns false when the worker
+ * isn't running or the torrent isn't active, so callers can fall back to
+ * deleting the file straight off disk.
+ */
+export async function clearFileFromWorker(
+  infoHash: string,
+  fileIndex: number
+): Promise<boolean> {
   try {
     const portRes = await fetch("http://localhost:8181/api/worker-port");
-    if (!portRes.ok) return;
+    if (!portRes.ok) return false;
     const { port } = await portRes.json();
-    await fetch(`http://localhost:${port}/torrent/${infoHash}/file?index=${fileIndex}`, { method: "DELETE" });
-  } catch {}
+    const res = await fetch(
+      `http://localhost:${port}/torrent/${infoHash}/file?index=${fileIndex}`,
+      { method: "DELETE" }
+    );
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 export async function deleteFromWorker(infoHash: string, itemName?: string): Promise<void> {
