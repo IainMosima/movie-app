@@ -14,6 +14,8 @@ import {
   X,
   MoreVertical,
   FolderOutput,
+  MonitorPlay,
+  ListVideo,
   Film,
   Tv,
 } from "lucide-react";
@@ -50,6 +52,8 @@ interface FolderDialogProps {
   folder: LibraryFolderWithUsage;
   items: LibraryItemWithUsage[];
   onPlay: (item: LibraryItemWithUsage) => void;
+  onOpenListing: (item: LibraryItemWithUsage) => void;
+  onVLC: (item: LibraryItemWithUsage) => void;
   onAddItem: (input: { name: string; magnet: string }) => Promise<unknown>;
   onClearItemCache: (id: string) => Promise<ReclaimResult>;
   onDeleteItem: (id: string) => Promise<unknown>;
@@ -66,6 +70,8 @@ export function FolderDialog({
   folder,
   items,
   onPlay,
+  onOpenListing,
+  onVLC,
   onAddItem,
   onClearItemCache,
   onDeleteItem,
@@ -346,6 +352,15 @@ export function FolderDialog({
                         align="end"
                         className="w-52 bg-zinc-900 border-zinc-800"
                       >
+                        <DropdownMenuItem onSelect={() => onOpenListing(item)}>
+                          <ListVideo className="h-4 w-4" />
+                          Browse files
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onSelect={() => onVLC(item)}>
+                          <MonitorPlay className="h-4 w-4" />
+                          Get VLC stream URL
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator className="bg-zinc-800" />
                         <DropdownMenuItem onSelect={() => onMoveOut(item.id)}>
                           <FolderOutput className="h-4 w-4" />
                           Move out of folder

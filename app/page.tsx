@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useMemo, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { ContinueWatching } from "@/components/continue-watching";
 import { FilePicker } from "@/components/file-picker";
@@ -71,7 +71,23 @@ function CategoryPicker({
   );
 }
 
-export default function HomePage() {
+/**
+ * Player URL. `from` is where Close and the browser's back button return to —
+ * the card you opened, not a bare home page.
+ */
+function watchUrl(
+  infoHash: string,
+  title: string,
+  fileIndex: number,
+  from: string
+) {
+  return (
+    `/watch/${infoHash}?title=${encodeURIComponent(title)}` +
+    `&file=${fileIndex}&from=${encodeURIComponent(from)}`
+  );
+}
+
+function LibraryView() {
   const router = useRouter();
   const {
     items,
@@ -91,10 +107,19 @@ export default function HomePage() {
 
   const { records: watchRecords, forget: forgetWatchRecord } = useWatchProgress();
 
-  // File picker state
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [selectedMagnet, setSelectedMagnet] = useState("");
-  const [selectedTitle, setSelectedTitle] = useState("");
+  // Which card is open lives in the URL (?folder=, ?listing=) rather than in
+  // component state. That way returning from the player — by our own Close
+  // button or the browser's back gesture — restores the card you opened.
+  const searchParams = useSearchParams();
+  const folderParam = searchParams.get("folder");
+  const listingParam = searchParams.get("listing");
+
+  // A magnet pasted into the quick-add bar isn't a library item, so it has no
+  // id to address it by in the URL. Those open the picker through this slot.
+  const [transientPicker, setTransientPicker] = useState<{
+    magnet: string;
+    title: string;
+  } | null>(null);
 
   // Add dialog state
   const [addDialogOpen, setAddDialogOpen] = useState(false);
@@ -105,7 +130,6 @@ export default function HomePage() {
   const [isAdding, setIsAdding] = useState(false);
 
   // Folder state
-  const [openFolderId, setOpenFolderId] = useState<string | null>(null);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [newFolderCategory, setNewFolderCategory] = useState<LibraryCategory | null>(null);
@@ -121,7 +145,36 @@ export default function HomePage() {
   // When VLC mode is active, file picker uses this callback instead of navigating
   const [vlcPickerCallback, setVlcPickerCallback] = useState<((fileIndex: number) => void) | null>(null);
 
-  const openFolder = folders.find((f) => f.id === openFolderId) ?? null;
+  const openFolder = folders.find((f) => f.id === folderParam) ?? null;
+
+  const listingItem = items.find((i) => i.id === listingParam) ?? null;
+  const pickerMagnet = listingItem?.magnet ?? transientPicker?.magnet ?? "";
+  const pickerTitle = listingItem?.name ?? transientPicker?.title ?? "";
+  const pickerOpen = Boolean(listingItem || transientPicker);
+
+  /** The home URL with card params patched; a null value clears one. */
+  const homeUrl = (next: { folder?: string | null; listing?: string | null }) => {
+    const params = new URLSearchParams(searchParams.toString());
+    for (const [key, value] of Object.entries(next)) {
+      if (value) params.set(key, value);
+      else params.delete(key);
+    }
+    const qs = params.toString();
+    return qs ? `/?${qs}` : "/";
+  };
+
+  // Opening pushes, so back closes the card. Closing replaces, so back doesn't
+  // reopen what you just dismissed.
+  const openFolderCard = (id: string) =>
+    router.push(homeUrl({ folder: id }), { scroll: false });
+
+  const closeFolderCard = () =>
+    router.replace(homeUrl({ folder: null, listing: null }), { scroll: false });
+
+  const closePicker = () => {
+    setTransientPicker(null);
+    router.replace(homeUrl({ listing: null }), { scroll: false });
+  };
 
   // Category is auto-detected from what you type until you override it.
   const effectiveNewItemCategory = newItemCategory ?? detectCategory(newName, newMagnet);
@@ -166,29 +219,10 @@ export default function HomePage() {
     visibleLooseItems.length === 0;
   const libraryEmpty = !libraryLoading && items.length === 0 && folders.length === 0;
 
-  // Handle returning from watch page - check localStorage for last show
-  useEffect(() => {
-    const lastShow = localStorage.getItem("lastShow");
-    if (lastShow) {
-      try {
-        const { magnet, title } = JSON.parse(lastShow);
-        if (magnet) {
-          setSelectedMagnet(magnet);
-          setSelectedTitle(title || "");
-          setPickerOpen(true);
-          // Clear after opening
-          localStorage.removeItem("lastShow");
-        }
-      } catch {
-        localStorage.removeItem("lastShow");
-      }
-    }
-  }, []);
-
   const handlePlayMagnet = async (
     magnet: string,
     title?: string,
-    options: { forcePicker?: boolean } = {}
+    options: { forcePicker?: boolean; itemId?: string } = {}
   ) => {
     // Extract name from magnet/URL if not provided
     if (!title) {
@@ -214,18 +248,17 @@ export default function HomePage() {
       const videoFiles = data.files.filter((f: { isVideo: boolean }) => f.isVideo);
 
       if (!options.forcePicker && videoFiles.length === 1) {
-        // Single video - play directly
-        // Save for back navigation
-        localStorage.setItem("lastShow", JSON.stringify({ magnet, title }));
+        // Single video — play it, remembering the card we came from.
         const fileIndex = data.mainVideoIndex ?? 0;
         router.push(
-          `/watch/${data.infoHash}?title=${encodeURIComponent(title || data.name)}&file=${fileIndex}`
+          watchUrl(data.infoHash, title || data.name, fileIndex, homeUrl({}))
         );
+      } else if (options.itemId) {
+        // Season pack in the library: the picker itself becomes part of the URL.
+        router.push(homeUrl({ listing: options.itemId }), { scroll: false });
       } else {
-        // Multiple videos - show picker
-        setSelectedMagnet(magnet);
-        setSelectedTitle(title);
-        setPickerOpen(true);
+        // A pasted magnet has no library id to put in the URL.
+        setTransientPicker({ magnet, title: title ?? "" });
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to load";
@@ -235,9 +268,11 @@ export default function HomePage() {
     }
   };
 
-  const handleOpenListing = (magnet: string, title?: string) => {
-    handlePlayMagnet(magnet, title, { forcePicker: true });
-  };
+  const handleOpenListing = (item: LibraryItemWithUsage) =>
+    handlePlayMagnet(item.magnet, item.name, {
+      forcePicker: true,
+      itemId: item.id,
+    });
 
   // Resuming has to re-add the torrent before navigating: the watch page waits
   // on /api/torrents and would sit on "Finding peers…" forever for a torrent the
@@ -256,12 +291,8 @@ export default function HomePage() {
       }
       const data = await res.json();
 
-      localStorage.setItem(
-        "lastShow",
-        JSON.stringify({ magnet: record.magnet, title: record.title })
-      );
       router.push(
-        `/watch/${data.infoHash}?title=${encodeURIComponent(record.title)}&file=${record.fileIndex}`
+        watchUrl(data.infoHash, record.title, record.fileIndex, homeUrl({}))
       );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to resume");
@@ -294,13 +325,11 @@ export default function HomePage() {
         setVlcUrl(buildUrl(data.mainVideoIndex ?? 0));
       } else {
         // Multi-file: open picker, then show URL for chosen file
-        setSelectedMagnet(magnet);
-        setSelectedTitle(title ?? "");
         setVlcPickerCallback(() => (fileIndex: number) => {
           setVlcUrl(buildUrl(fileIndex));
           setVlcPickerCallback(null);
         });
-        setPickerOpen(true);
+        setTransientPicker({ magnet, title: title ?? "" });
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to load");
@@ -314,16 +343,15 @@ export default function HomePage() {
     fileIndex: number,
     fileName: string
   ) => {
-    setPickerOpen(false);
-
     // VLC mode: show URL popup instead of navigating
     if (vlcPickerCallback) {
+      closePicker();
       vlcPickerCallback(fileIndex);
       return;
     }
 
     // Persist chosen episode index to the library item
-    const libItem = items.find((i: LibraryItemWithUsage) => i.magnet === selectedMagnet);
+    const libItem = items.find((i: LibraryItemWithUsage) => i.magnet === pickerMagnet);
     if (libItem) {
       fetch(`/api/library/${libItem.id}`, {
         method: "PUT",
@@ -332,16 +360,9 @@ export default function HomePage() {
       }).catch(() => {});
     }
 
-    // Save current show to localStorage for back navigation
-    localStorage.setItem("lastShow", JSON.stringify({
-      magnet: selectedMagnet,
-      title: selectedTitle || fileName,
-    }));
-
-    const title = selectedTitle || fileName;
-    router.push(
-      `/watch/${infoHash}?title=${encodeURIComponent(title)}&file=${fileIndex}`
-    );
+    // The picker stays in the URL on purpose: back from the player reopens it.
+    const title = pickerTitle || fileName;
+    router.push(watchUrl(infoHash, title, fileIndex, homeUrl({})));
   };
 
   const handleAddToLibrary = async () => {
@@ -379,7 +400,7 @@ export default function HomePage() {
       setNewFolderName("");
       setNewFolderCategory(null);
       setNewFolderOpen(false);
-      if (folder?.id) setOpenFolderId(folder.id);
+      if (folder?.id) openFolderCard(folder.id);
     } catch {
       toast.error("Failed to create folder");
     } finally {
@@ -669,7 +690,7 @@ export default function HomePage() {
                 <FolderCard
                   key={folder.id}
                   folder={folder}
-                  onOpen={() => setOpenFolderId(folder.id)}
+                  onOpen={() => openFolderCard(folder.id)}
                 />
               ))}
             </div>
@@ -683,8 +704,10 @@ export default function HomePage() {
                   key={item.id}
                   item={item}
                   folders={folders}
-                  onPlay={() => handlePlayMagnet(item.magnet, item.name)}
-                  onOpen={() => handleOpenListing(item.magnet, item.name)}
+                  onPlay={() =>
+                    handlePlayMagnet(item.magnet, item.name, { itemId: item.id })
+                  }
+                  onOpen={() => handleOpenListing(item)}
                   onDelete={() => handleDelete(item.id, item.name)}
                   onClearCache={() => handleClearCache(item.id, item.name)}
                   onVLC={() => handleVLC(item.magnet, item.name)}
@@ -754,12 +777,12 @@ export default function HomePage() {
       </div>
 
       {/* File picker modal */}
-      {selectedMagnet && (
+      {pickerMagnet && (
         <FilePicker
           open={pickerOpen}
-          onClose={() => setPickerOpen(false)}
-          magnet={selectedMagnet}
-          title={selectedTitle}
+          onClose={closePicker}
+          magnet={pickerMagnet}
+          title={pickerTitle}
           onSelectFile={handleSelectFile}
         />
       )}
@@ -767,14 +790,15 @@ export default function HomePage() {
       {/* Folder modal */}
       {openFolder && (
         <FolderDialog
-          open={openFolderId !== null}
-          onClose={() => setOpenFolderId(null)}
+          open
+          onClose={closeFolderCard}
           folder={openFolder}
           items={items.filter((i) => i.folderId === openFolder.id)}
-          onPlay={(item) => {
-            setOpenFolderId(null);
-            handlePlayMagnet(item.magnet, item.name);
-          }}
+          onPlay={(item) =>
+            handlePlayMagnet(item.magnet, item.name, { itemId: item.id })
+          }
+          onOpenListing={(item) => handleOpenListing(item)}
+          onVLC={(item) => handleVLC(item.magnet, item.name)}
           onAddItem={(input) => addItem({ ...input, folderId: openFolder.id })}
           onClearItemCache={(id) => clearItemCache(id)}
           onDeleteItem={(id) => deleteItem(id)}
@@ -786,5 +810,14 @@ export default function HomePage() {
         />
       )}
     </main>
+  );
+}
+
+// useSearchParams needs a Suspense boundary for this route to prerender.
+export default function HomePage() {
+  return (
+    <Suspense fallback={null}>
+      <LibraryView />
+    </Suspense>
   );
 }

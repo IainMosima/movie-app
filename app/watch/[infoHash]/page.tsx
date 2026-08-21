@@ -22,6 +22,14 @@ export default function WatchPage({ params }: WatchPageProps) {
   const searchParams = useSearchParams();
   const title = searchParams.get("title") || "Unknown";
   const fileIndex = searchParams.get("file");
+  // Where leaving the player returns to — the card that opened it. Only
+  // same-origin relative paths are honoured, so a crafted ?from= can't
+  // redirect anywhere off this app.
+  const fromParam = searchParams.get("from");
+  const returnTo =
+    fromParam && fromParam.startsWith("/") && !fromParam.startsWith("//")
+      ? fromParam
+      : "/";
   const sessionIdRef = useRef<string | null>(null);
   const hasStartedRef = useRef(false);
   const [subtitles, setSubtitles] = useState<{ label: string; src: string }[]>([]);
@@ -336,8 +344,8 @@ export default function WatchPage({ params }: WatchPageProps) {
   }, [filePath, infoHash, fileIndexNum]);
 
   const handleKeep = useCallback(() => {
-    router.push("/");
-  }, [router]);
+    router.push(returnTo);
+  }, [router, returnTo]);
 
   const handleClearAndClose = useCallback(async () => {
     setIsClearing(true);
@@ -350,9 +358,9 @@ export default function WatchPage({ params }: WatchPageProps) {
       // Fall through — the storage panel can still reclaim it later
     } finally {
       setIsClearing(false);
-      router.push("/");
+      router.push(returnTo);
     }
-  }, [fileIndexNum, filePath, infoHash, router]);
+  }, [fileIndexNum, filePath, infoHash, router, returnTo]);
 
   // Show connecting screen until we have peers, a stream URL, the probe has
   // completed, and we know whether there's a position to resume from
