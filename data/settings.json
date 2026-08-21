@@ -5,5 +5,6 @@
   "cleanupDelaySeconds": 300,
   "prebufferSeconds": 90,
   "bufferSizeMB": 200,
-  "prebufferMode": "strict"
+  "prebufferMode": "strict",
+  "autoPurgePrevious": false
 }

@@ -3,11 +3,19 @@
 import { useEffect, useRef, useCallback, useState, use } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { VideoPlayer } from "@/components/video-player";
-import { Loader2 } from "lucide-react";
+import { Loader2, HardDrive } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface WatchPageProps {
   params: Promise<{ infoHash: string }>;
+}
+
+/** Something else still holding disk space while this one plays. */
+interface PurgeCandidate {
+  id: string;
+  name: string;
+  bytes: number;
+  formatted: string;
 }
 
 function formatSpeed(bytesPerSec: number): string {
@@ -44,6 +52,12 @@ export default function WatchPage({ params }: WatchPageProps) {
   const [filePath, setFilePath] = useState<string | null>(null);
   const [showClearPrompt, setShowClearPrompt] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
+  // Other items still holding bytes. Same-folder episodes are reclaimed by the
+  // server without asking; whatever comes back here needs a yes first.
+  const [purgeCandidates, setPurgeCandidates] = useState<PurgeCandidate[]>([]);
+  const [reclaimedNotice, setReclaimedNotice] = useState<string | null>(null);
+  const [isPurging, setIsPurging] = useState(false);
+  const purgeCheckedRef = useRef(false);
   const [cachedFormatted, setCachedFormatted] = useState<string | null>(null);
 
   // Watch progress
@@ -328,6 +342,51 @@ export default function WatchPage({ params }: WatchPageProps) {
     return () => clearTimeout(timer);
   }, [infoHash]);
 
+  // Once this episode is actually playing, anything else still on disk is dead
+  // weight. Runs once per mount; never blocks playback if it fails.
+  useEffect(() => {
+    if (!streamUrl || !peersReady || purgeCheckedRef.current) return;
+    purgeCheckedRef.current = true;
+
+    fetch("/api/purge-previous", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ infoHash }),
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!data) return;
+        if (data.reclaimedBytes > 0) setReclaimedNotice(data.reclaimedFormatted);
+        if (data.pending?.length) setPurgeCandidates(data.pending);
+      })
+      .catch(() => {});
+  }, [streamUrl, peersReady, infoHash]);
+
+  // Auto-dismiss the "reclaimed X" note so it doesn't sit over the film.
+  useEffect(() => {
+    if (!reclaimedNotice) return;
+    const timer = setTimeout(() => setReclaimedNotice(null), 6000);
+    return () => clearTimeout(timer);
+  }, [reclaimedNotice]);
+
+  const handleConfirmPurge = useCallback(async () => {
+    setIsPurging(true);
+    try {
+      const res = await fetch("/api/purge-previous", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ infoHash, confirm: true }),
+      });
+      const data = res.ok ? await res.json() : null;
+      if (data?.reclaimedBytes > 0) setReclaimedNotice(data.reclaimedFormatted);
+    } catch {
+      // Nothing was freed; the storage panel can still do it later.
+    } finally {
+      setIsPurging(false);
+      setPurgeCandidates([]);
+    }
+  }, [infoHash]);
+
   // Closing the player is the natural "I'm done with this episode" moment, so
   // offer to reclaim its bytes right there. Nothing is deleted unless asked.
   const handleClose = useCallback(() => {
@@ -410,6 +469,58 @@ export default function WatchPage({ params }: WatchPageProps) {
         resumeFrom={resumeFrom}
         onProgress={handleProgress}
       />
+
+      {/* Something else is still using disk. Ask before reclaiming it. */}
+      {purgeCandidates.length > 0 && !showClearPrompt && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[55] w-[calc(100%-2rem)] max-w-sm">
+          <div className="bg-zinc-900/95 backdrop-blur border border-zinc-700 rounded-xl p-4 shadow-2xl">
+            <div className="flex items-start gap-2.5 mb-3">
+              <HardDrive className="h-4 w-4 text-amber-400 mt-0.5 shrink-0" />
+              <div className="min-w-0">
+                <p className="text-sm text-zinc-100 font-medium">
+                  {purgeCandidates.length === 1
+                    ? `"${purgeCandidates[0].name}" is still using ${purgeCandidates[0].formatted}`
+                    : `${purgeCandidates.length} others are using ${purgeCandidates
+                        .reduce((sum, c) => sum + c.bytes, 0) > 0
+                        ? purgeCandidates.map((c) => c.formatted).join(" + ")
+                        : ""}`}
+                </p>
+                <p className="text-[11px] text-zinc-500 mt-1">
+                  Clearing keeps them in your library — they re-download on play.
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                onClick={handleConfirmPurge}
+                disabled={isPurging}
+                className="h-10 flex-1 text-sm"
+              >
+                {isPurging && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />}
+                Purge
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setPurgeCandidates([])}
+                disabled={isPurging}
+                className="h-10 flex-1 border-zinc-700 text-sm"
+              >
+                Keep
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Same-folder episodes are reclaimed silently; just say what was freed. */}
+      {reclaimedNotice && purgeCandidates.length === 0 && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[55] px-3.5 py-2 rounded-lg bg-zinc-900/95 backdrop-blur border border-zinc-700 shadow-xl flex items-center gap-2">
+          <HardDrive className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+          <span className="text-xs text-zinc-300">
+            Reclaimed {reclaimedNotice} from the previous one
+          </span>
+        </div>
+      )}
 
       {showClearPrompt && (
         <div className="fixed inset-0 z-[60] bg-black/85 flex items-center justify-center px-4">

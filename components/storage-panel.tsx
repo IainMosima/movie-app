@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { HardDrive, AlertTriangle, Trash2, Loader2, RefreshCw } from "lucide-react";
 import { useStorage } from "@/hooks/use-storage";
@@ -26,6 +26,30 @@ const KIND_BADGE: Record<StorageEntry["kind"], { label: string; className: strin
 
 export function StoragePanel() {
   const { report, isLoading, orphanCount, deleteOrphan, deleteAllOrphans, refresh } = useStorage();
+  // Whether starting something new reclaims the previous one without asking.
+  // Episodes inside one folder are always reclaimed; this covers everything else.
+  const [autoPurge, setAutoPurge] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    fetch("/api/settings")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setAutoPurge(data?.autoPurgePrevious === true))
+      .catch(() => setAutoPurge(false));
+  }, []);
+
+  const toggleAutoPurge = async () => {
+    const next = !autoPurge;
+    setAutoPurge(next); // optimistic: it's a preference, not a destructive act
+    try {
+      await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ autoPurgePrevious: next }),
+      });
+    } catch {
+      setAutoPurge(!next);
+    }
+  };
   const [busy, setBusy] = useState<string | null>(null);
 
   const handleDeleteOne = async (entry: StorageEntry) => {
@@ -74,6 +98,35 @@ export function StoragePanel() {
           <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
         </button>
       </div>
+
+      {/* Auto-purge preference */}
+      <button
+        onClick={toggleAutoPurge}
+        disabled={autoPurge === null}
+        role="switch"
+        aria-checked={autoPurge === true}
+        className="w-full flex items-center justify-between gap-3 mb-3 py-2 px-2.5 -mx-0.5 rounded-lg hover:bg-zinc-800/40 transition-colors text-left disabled:opacity-50"
+      >
+        <span className="min-w-0">
+          <span className="block text-xs text-zinc-300">Auto-purge previous</span>
+          <span className="block text-[11px] text-zinc-600 mt-0.5">
+            {autoPurge
+              ? "Starting something new clears the last one automatically"
+              : "You'll be asked before the last one is cleared"}
+          </span>
+        </span>
+        <span
+          className={`shrink-0 h-6 w-10 rounded-full p-0.5 transition-colors ${
+            autoPurge ? "bg-purple-600" : "bg-zinc-700"
+          }`}
+        >
+          <span
+            className={`block h-5 w-5 rounded-full bg-white transition-transform ${
+              autoPurge ? "translate-x-4" : "translate-x-0"
+            }`}
+          />
+        </span>
+      </button>
 
       {/* Disk space line */}
       {disk && disk.totalBytes > 0 && (

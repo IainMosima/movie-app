@@ -1,3 +1,12 @@
+// The worker is a separate process and can be mid-stall, restarting, or wedged
+// behind a port conflict. Every call to it is bounded so a slow worker can
+// never hang a request the player is waiting on.
+const WORKER_TIMEOUT_MS = 4000;
+
+function workerFetch(url: string, init?: RequestInit): Promise<Response> {
+  return fetch(url, { ...init, signal: AbortSignal.timeout(WORKER_TIMEOUT_MS) });
+}
+
 export function extractInfoHashFromMagnet(magnet: string): string | null {
   const m = magnet.match(/[?&]xt=urn:btih:([a-fA-F0-9]{40}|[a-zA-Z2-7]{32})/i);
   if (m) return m[1].toLowerCase();
@@ -15,10 +24,10 @@ export async function clearFileFromWorker(
   fileIndex: number
 ): Promise<boolean> {
   try {
-    const portRes = await fetch("http://localhost:8181/api/worker-port");
+    const portRes = await workerFetch("http://localhost:8181/api/worker-port");
     if (!portRes.ok) return false;
     const { port } = await portRes.json();
-    const res = await fetch(
+    const res = await workerFetch(
       `http://localhost:${port}/torrent/${infoHash}/file?index=${fileIndex}`,
       { method: "DELETE" }
     );
@@ -30,11 +39,13 @@ export async function clearFileFromWorker(
 
 export async function deleteFromWorker(infoHash: string, itemName?: string): Promise<void> {
   try {
-    const portRes = await fetch("http://localhost:8181/api/worker-port");
+    const portRes = await workerFetch("http://localhost:8181/api/worker-port");
     if (!portRes.ok) return;
     const { port } = await portRes.json();
     const nameParam = itemName ? `?name=${encodeURIComponent(itemName)}` : "";
-    await fetch(`http://localhost:${port}/torrent/${infoHash}${nameParam}`, { method: "DELETE" });
+    await workerFetch(`http://localhost:${port}/torrent/${infoHash}${nameParam}`, {
+      method: "DELETE",
+    });
   } catch {
     // Worker may not be running — files already gone or will be cleaned up
   }

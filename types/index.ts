@@ -20,6 +20,8 @@ export interface EngineSettings {
   prebufferSeconds: number;
   bufferSizeMB: number;
   prebufferMode: "strict" | "timeout";
+  /** Reclaim a previous item's bytes without asking first. Off by default. */
+  autoPurgePrevious?: boolean;
 }
 
 // Search result types

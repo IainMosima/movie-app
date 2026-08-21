@@ -16,6 +16,7 @@ const DEFAULT_SETTINGS: EngineSettings = {
   prebufferSeconds: 90, // wait up to 90s for the initial safety buffer
   bufferSizeMB: 200, // cache ~200MB so TVs can coast through peer stalls
   prebufferMode: "strict",
+  autoPurgePrevious: false, // never reclaim without asking unless turned on
 };
 
 function ensureSettingsFile(path: string): void {
