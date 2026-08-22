@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { isValidTorrentInput, extractTitleFromInput } from "@/lib/torrent-utils";
 import { detectCategory } from "@/lib/category";
+import { watchUrl } from "@/lib/watch-url";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -68,22 +69,6 @@ function CategoryPicker({
         </button>
       ))}
     </div>
-  );
-}
-
-/**
- * Player URL. `from` is where Close and the browser's back button return to —
- * the card you opened, not a bare home page.
- */
-function watchUrl(
-  infoHash: string,
-  title: string,
-  fileIndex: number,
-  from: string
-) {
-  return (
-    `/watch/${infoHash}?title=${encodeURIComponent(title)}` +
-    `&file=${fileIndex}&from=${encodeURIComponent(from)}`
   );
 }
 

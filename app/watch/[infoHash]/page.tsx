@@ -3,6 +3,7 @@
 import { useEffect, useRef, useCallback, useState, use } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { VideoPlayer } from "@/components/video-player";
+import { useNextEpisode } from "@/hooks/use-next-episode";
 import { Loader2, HardDrive } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -17,6 +18,9 @@ interface PurgeCandidate {
   bytes: number;
   formatted: string;
 }
+
+/** How long the purge offer stays up before quietly meaning "Keep". */
+const PURGE_PROMPT_MS = 45_000;
 
 function formatSpeed(bytesPerSec: number): string {
   if (bytesPerSec < 1024) return `${bytesPerSec} B/s`;
@@ -58,6 +62,10 @@ export default function WatchPage({ params }: WatchPageProps) {
   const [reclaimedNotice, setReclaimedNotice] = useState<string | null>(null);
   const [isPurging, setIsPurging] = useState(false);
   const purgeCheckedRef = useRef(false);
+  // One prefetch attempt per mount, once the current episode is far enough
+  // ahead that pulling the next one can't starve it.
+  const prefetchedRef = useRef(false);
+  const [prefetchMinBuffer, setPrefetchMinBuffer] = useState(300);
   const [cachedFormatted, setCachedFormatted] = useState<string | null>(null);
 
   // Watch progress
@@ -67,6 +75,13 @@ export default function WatchPage({ params }: WatchPageProps) {
   const lastPositionRef = useRef<{ positionSec: number; durationSec: number } | null>(null);
 
   const fileIndexNum = fileIndex ? parseInt(fileIndex, 10) || 0 : 0;
+
+  const { nextLabel, nextFileIndex, nextFileSize, goNext } = useNextEpisode(
+    infoHash,
+    fileIndexNum,
+    returnTo
+  );
+
 
   // Get or create session + resolve direct stream URL
   useEffect(() => {
@@ -391,6 +406,43 @@ export default function WatchPage({ params }: WatchPageProps) {
     return () => clearTimeout(timer);
   }, [reclaimedNotice]);
 
+  // The purge offer shouldn't camp over the picture. Letting it time out is the
+  // same as choosing Keep — walking away never deletes anything.
+  useEffect(() => {
+    if (purgeCandidates.length === 0 || isPurging) return;
+    const timer = setTimeout(() => setPurgeCandidates([]), PURGE_PROMPT_MS);
+    return () => clearTimeout(timer);
+  }, [purgeCandidates, isPurging]);
+
+  useEffect(() => {
+    fetch("/api/settings")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((s) => {
+        if (typeof s?.prefetchMinBufferSeconds === "number") {
+          setPrefetchMinBuffer(s.prefetchMinBufferSeconds);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleBufferHealth = useCallback(
+    (secondsAhead: number) => {
+      if (prefetchedRef.current) return;
+      if (nextFileIndex === undefined) return;
+      if (secondsAhead < prefetchMinBuffer) return;
+
+      prefetchedRef.current = true;
+      fetch(`/api/torrent/${infoHash}/prefetch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileIndex: nextFileIndex, fileSize: nextFileSize ?? 0 }),
+      }).catch(() => {
+        prefetchedRef.current = false; // transient failure, let it try again
+      });
+    },
+    [infoHash, nextFileIndex, nextFileSize, prefetchMinBuffer]
+  );
+
   const handleConfirmPurge = useCallback(async () => {
     setIsPurging(true);
     try {
@@ -490,6 +542,9 @@ export default function WatchPage({ params }: WatchPageProps) {
         fallbackDuration={probedDuration ?? undefined}
         resumeFrom={resumeFrom}
         onProgress={handleProgress}
+        nextLabel={nextLabel}
+        onNext={goNext}
+        onBufferHealth={handleBufferHealth}
       />
 
       {/* Something else is still using disk. Ask before reclaiming it. */}

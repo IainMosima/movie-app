@@ -11,6 +11,8 @@ const UpdateSettingsSchema = z.object({
   bufferSizeMB: z.number().min(50).max(500).optional(),
   prebufferMode: z.enum(["strict", "timeout"]).optional(),
   autoPurgePrevious: z.boolean().optional(),
+  prefetchNextEpisode: z.boolean().optional(),
+  prefetchMinBufferSeconds: z.number().min(0).max(3600).optional(),
 });
 
 // GET /api/settings - Get engine settings

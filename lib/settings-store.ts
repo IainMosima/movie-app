@@ -17,6 +17,8 @@ const DEFAULT_SETTINGS: EngineSettings = {
   bufferSizeMB: 200, // cache ~200MB so TVs can coast through peer stalls
   prebufferMode: "strict",
   autoPurgePrevious: false, // never reclaim without asking unless turned on
+  prefetchNextEpisode: true,
+  prefetchMinBufferSeconds: 300, // only once the current episode is well ahead
 };
 
 function ensureSettingsFile(path: string): void {

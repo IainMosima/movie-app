@@ -22,6 +22,10 @@ export interface EngineSettings {
   prebufferMode: "strict" | "timeout";
   /** Reclaim a previous item's bytes without asking first. Off by default. */
   autoPurgePrevious?: boolean;
+  /** Pull the next episode ahead while the current one plays. */
+  prefetchNextEpisode?: boolean;
+  /** Seconds of buffer the current episode needs before a prefetch starts. */
+  prefetchMinBufferSeconds?: number;
 }
 
 // Search result types

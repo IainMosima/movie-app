@@ -29,13 +29,34 @@ export function StoragePanel() {
   // Whether starting something new reclaims the previous one without asking.
   // Episodes inside one folder are always reclaimed; this covers everything else.
   const [autoPurge, setAutoPurge] = useState<boolean | null>(null);
+  const [prefetch, setPrefetch] = useState<boolean | null>(null);
 
   useEffect(() => {
     fetch("/api/settings")
       .then((res) => (res.ok ? res.json() : null))
-      .then((data) => setAutoPurge(data?.autoPurgePrevious === true))
-      .catch(() => setAutoPurge(false));
+      .then((data) => {
+        setAutoPurge(data?.autoPurgePrevious === true);
+        setPrefetch(data?.prefetchNextEpisode !== false);
+      })
+      .catch(() => {
+        setAutoPurge(false);
+        setPrefetch(false);
+      });
   }, []);
+
+  const togglePrefetch = async () => {
+    const next = !prefetch;
+    setPrefetch(next);
+    try {
+      await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prefetchNextEpisode: next }),
+      });
+    } catch {
+      setPrefetch(!next);
+    }
+  };
 
   const toggleAutoPurge = async () => {
     const next = !autoPurge;
@@ -123,6 +144,35 @@ export function StoragePanel() {
           <span
             className={`block h-5 w-5 rounded-full bg-white transition-transform ${
               autoPurge ? "translate-x-4" : "translate-x-0"
+            }`}
+          />
+        </span>
+      </button>
+
+      {/* Pull-ahead preference */}
+      <button
+        onClick={togglePrefetch}
+        disabled={prefetch === null}
+        role="switch"
+        aria-checked={prefetch === true}
+        className="w-full flex items-center justify-between gap-3 mb-3 py-2 px-2.5 -mx-0.5 rounded-lg hover:bg-zinc-800/40 transition-colors text-left disabled:opacity-50"
+      >
+        <span className="min-w-0">
+          <span className="block text-xs text-zinc-300">Prefetch next episode</span>
+          <span className="block text-[11px] text-zinc-600 mt-0.5">
+            {prefetch
+              ? "Pulls the next one once the current is well buffered"
+              : "Each episode downloads only when you start it"}
+          </span>
+        </span>
+        <span
+          className={`shrink-0 h-6 w-10 rounded-full p-0.5 transition-colors ${
+            prefetch ? "bg-purple-600" : "bg-zinc-700"
+          }`}
+        >
+          <span
+            className={`block h-5 w-5 rounded-full bg-white transition-transform ${
+              prefetch ? "translate-x-4" : "translate-x-0"
             }`}
           />
         </span>

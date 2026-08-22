@@ -70,11 +70,19 @@ export async function POST(req: NextRequest) {
   // Same-folder siblings go without asking; a loose item has no siblings.
   const siblings = current?.folderId
     ? cachedOthers.filter(
-        (c) => items.find((i) => i.id === c.id)?.folderId === current.folderId
+        (c) =>
+          c.id !== keepId &&
+          items.find((i) => i.id === c.id)?.folderId === current.folderId
       )
     : [];
   const siblingIds = new Set(siblings.map((s) => s.id));
-  const rest = cachedOthers.filter((c) => !siblingIds.has(c.id));
+  const rest = cachedOthers.filter(
+    (c) => !siblingIds.has(c.id) && c.id !== keepId
+  );
+
+  // An episode we deliberately pulled ahead must survive this sweep — it is the
+  // one sibling that is holding bytes on purpose.
+  const keepId: string | undefined = body?.keepItemId;
 
   const auto = getSettings().autoPurgePrevious === true;
   const confirmed = body?.confirm === true;

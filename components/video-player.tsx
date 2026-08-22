@@ -13,6 +13,7 @@ import {
   Loader2,
   Subtitles,
   AlertCircle,
+  SkipForward,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -39,6 +40,15 @@ interface VideoPlayerProps {
   resumeFrom?: number;
   /** Throttled playback position reporter (~every 10s) for watch progress. */
   onProgress?: (positionSec: number, durationSec: number) => void;
+  /** Label for the next episode, e.g. "S03E05". Absent hides the button. */
+  nextLabel?: string;
+  /** Jump to the next episode. Absent hides the button. */
+  onNext?: () => void;
+  /**
+   * How many seconds of video are buffered past the play head, reported on the
+   * same throttle as onProgress. Drives the decision to prefetch what's next.
+   */
+  onBufferHealth?: (secondsAhead: number) => void;
 }
 
 const PROGRESS_REPORT_INTERVAL_MS = 10_000;
@@ -59,6 +69,9 @@ export function VideoPlayer({
   fallbackDuration,
   resumeFrom,
   onProgress,
+  nextLabel,
+  onNext,
+  onBufferHealth,
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -97,6 +110,7 @@ export function VideoPlayer({
   // Held in a ref so a new callback identity from the parent doesn't tear down
   // and re-attach every media listener on each render.
   const onProgressRef = useRef(onProgress);
+  const onBufferHealthRef = useRef(onBufferHealth);
   const recoveryAttemptsRef = useRef(0);
   const lastRecoveryAtRef = useRef(0);
   const [isInitialStrictBuffering, setIsInitialStrictBuffering] = useState<boolean>(
@@ -105,7 +119,8 @@ export function VideoPlayer({
 
   useEffect(() => {
     onProgressRef.current = onProgress;
-  }, [onProgress]);
+    onBufferHealthRef.current = onBufferHealth;
+  }, [onProgress, onBufferHealth]);
 
   useEffect(() => {
     setPlaybackSrc(src);
@@ -317,6 +332,20 @@ export function VideoPlayer({
       }
       lastProgressReportRef.current = now;
       report(t, effectiveDuration());
+
+      // Piggyback on the same throttle: how far the download is ahead of the
+      // play head is what decides whether there is room to fetch what's next.
+      const reportBuffer = onBufferHealthRef.current;
+      if (reportBuffer) {
+        let ahead = 0;
+        for (let i = 0; i < video.buffered.length; i++) {
+          if (video.buffered.start(i) <= t && t <= video.buffered.end(i)) {
+            ahead = video.buffered.end(i) - t;
+            break;
+          }
+        }
+        reportBuffer(ahead);
+      }
     };
 
     const handlePlay = () => setIsPlaying(true);
@@ -1469,6 +1498,29 @@ export function VideoPlayer({
             {/* Spacer - only on desktop */}
             {!prefersAlwaysOnControls && <div className="flex-1" />}
 
+
+            {/* Next episode — sits with the right-hand cluster, and stays on
+                TV where a remote has no other way to advance an episode. */}
+            {onNext && (
+              <button
+                {...handleTVClick(() => onNext())}
+                aria-label={nextLabel ? `Next episode: ${nextLabel}` : "Next episode"}
+                title={nextLabel ? `Next: ${nextLabel}` : "Next episode"}
+                className={cn(
+                  "flex items-center justify-center gap-2 text-white rounded-full cursor-pointer",
+                  "hover:bg-white/10 active:bg-white/30",
+                  "focus:bg-white/20 focus:ring-2 focus:ring-white focus:outline-none",
+                  prefersAlwaysOnControls ? "h-14 px-5 text-lg" : "h-10 px-3 text-sm"
+                )}
+              >
+                <SkipForward
+                  className={prefersAlwaysOnControls ? "h-6 w-6" : "h-5 w-5"}
+                />
+                {nextLabel && (
+                  <span className="hidden sm:inline tabular-nums">{nextLabel}</span>
+                )}
+              </button>
+            )}
 
             {/* Playback speed - hide on TV */}
             {!prefersAlwaysOnControls && (
