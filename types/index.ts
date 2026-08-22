@@ -98,6 +98,9 @@ export interface LibraryItem {
   // infoHash, so cache reconciliation is exact instead of guessing from `dn=`.
   cacheFolder?: string;
   infoHash?: string;
+  // Manual position inside its folder. Absent means "order me by episode".
+  // Only honoured when every item in the folder has one (see library-store).
+  sortOrder?: number;
 }
 
 // A folder holds a series (episode per magnet) or a movie set. Grouping only —

@@ -2,6 +2,7 @@ import "server-only";
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
 import { getDataDir } from "@/lib/data-dir";
+import { sortFolderItems } from "@/lib/episode-order";
 import type {
   LibraryItem,
   LibraryFolder,
@@ -112,8 +113,54 @@ export function getFolderById(id: string): LibraryFolder | null {
   return getLibrary().folders.find((f) => f.id === id) || null;
 }
 
+/**
+ * A folder's contents in the order they should be shown: a manual arrangement
+ * when one has been made, otherwise by episode.
+ *
+ * The manual order only applies when *every* item carries a sortOrder —
+ * a half-arranged folder would otherwise interleave unpositioned episodes
+ * unpredictably, which reads as a bug rather than as a partial preference.
+ */
 export function getItemsByFolder(folderId: string): LibraryItem[] {
-  return getLibrary().items.filter((item) => item.folderId === folderId);
+  const items = getLibrary().items.filter((item) => item.folderId === folderId);
+  return sortFolderItems(items);
+}
+
+/**
+ * Pin a folder's items to an explicit order. Ids not in the folder are ignored;
+ * anything the caller omitted keeps its place at the end, so a partial list
+ * can never silently drop an episode out of the arrangement.
+ */
+export function reorderFolderItems(
+  folderId: string,
+  orderedIds: string[]
+): LibraryItem[] {
+  const data = getLibrary();
+  const inFolder = data.items.filter((i) => i.folderId === folderId);
+
+  const ranked = orderedIds.filter((id) => inFolder.some((i) => i.id === id));
+  const remainder = inFolder
+    .filter((i) => !ranked.includes(i.id))
+    .map((i) => i.id);
+  const finalOrder = [...ranked, ...remainder];
+
+  for (const item of data.items) {
+    const position = finalOrder.indexOf(item.id);
+    if (position !== -1) item.sortOrder = position;
+  }
+
+  saveLibrary(data);
+  return getItemsByFolder(folderId);
+}
+
+/** Drop the manual arrangement so the folder falls back to episode order. */
+export function clearFolderItemOrder(folderId: string): LibraryItem[] {
+  const data = getLibrary();
+  for (const item of data.items) {
+    if (item.folderId === folderId) delete item.sortOrder;
+  }
+  saveLibrary(data);
+  return getItemsByFolder(folderId);
 }
 
 export function addFolder(

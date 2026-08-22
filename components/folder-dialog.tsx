@@ -16,6 +16,8 @@ import {
   FolderOutput,
   MonitorPlay,
   ListVideo,
+  GripVertical,
+  ArrowDownAZ,
   Film,
   Tv,
 } from "lucide-react";
@@ -36,6 +38,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { isValidTorrentInput } from "@/lib/torrent-utils";
 import { cn } from "@/lib/utils";
+import { sortFolderItems } from "@/lib/episode-order";
 import type {
   LibraryFolderWithUsage,
   LibraryItemWithUsage,
@@ -59,6 +62,8 @@ interface FolderDialogProps {
   onDeleteItem: (id: string) => Promise<unknown>;
   onMoveOut: (id: string) => Promise<unknown>;
   onClearFolderCache: () => Promise<ReclaimResult>;
+  onReorder: (orderedIds: string[]) => Promise<unknown>;
+  onResetOrder: () => Promise<unknown>;
   onRename: (name: string) => Promise<unknown>;
   onSetCategory: (category: LibraryCategory) => Promise<unknown>;
   onDeleteFolder: (opts: { deleteItems: boolean }) => Promise<unknown>;
@@ -77,11 +82,17 @@ export function FolderDialog({
   onDeleteItem,
   onMoveOut,
   onClearFolderCache,
+  onReorder,
+  onResetOrder,
   onRename,
   onSetCategory,
   onDeleteFolder,
 }: FolderDialogProps) {
   const [busy, setBusy] = useState<string | null>(null);
+  // Drag-to-arrange. `draft` holds the in-flight order so rows follow the
+  // pointer without waiting on the server; it clears once the save lands.
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<string[] | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [newName, setNewName] = useState("");
   const [newMagnet, setNewMagnet] = useState("");
@@ -89,6 +100,38 @@ export function FolderDialog({
   const [draftName, setDraftName] = useState(folder.name);
 
   const cachedCount = items.filter((i) => i.cachedBytes > 0).length;
+
+  // Episode order unless the folder has been arranged by hand; while dragging,
+  // the local draft takes over so the list tracks the pointer.
+  const ordered = sortFolderItems(items);
+  const shown = draft
+    ? (draft
+        .map((id) => items.find((i) => i.id === id))
+        .filter(Boolean) as LibraryItemWithUsage[])
+    : ordered;
+  const isArranged = items.length > 0 && items.every((i) => i.sortOrder !== undefined);
+
+  const handleDrop = async (targetId: string) => {
+    if (!dragId || dragId === targetId) {
+      setDragId(null);
+      return;
+    }
+    const ids = shown.map((i) => i.id);
+    const from = ids.indexOf(dragId);
+    const to = ids.indexOf(targetId);
+    if (from === -1 || to === -1) {
+      setDragId(null);
+      return;
+    }
+    ids.splice(to, 0, ids.splice(from, 1)[0]);
+    setDraft(ids);
+    setDragId(null);
+    try {
+      await onReorder(ids);
+    } finally {
+      setDraft(null); // server order is authoritative once it answers
+    }
+  };
 
   const run = async (key: string, fn: () => Promise<void>) => {
     setBusy(key);
@@ -288,14 +331,28 @@ export function FolderDialog({
             </p>
           ) : (
             <div className="space-y-2">
-              {items.map((item) => {
+              {shown.map((item) => {
                 const isBusy = busy === item.id;
                 const cached = item.cachedBytes > 0;
                 return (
                   <div
                     key={item.id}
-                    className="group flex items-center gap-2 sm:gap-3 rounded-xl bg-zinc-900/60 border border-zinc-800 hover:border-zinc-700 p-2.5 sm:p-3 transition-colors"
+                    draggable
+                    onDragStart={() => setDragId(item.id)}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={() => handleDrop(item.id)}
+                    onDragEnd={() => setDragId(null)}
+                    className={cn(
+                      "group flex items-center gap-2 sm:gap-3 rounded-xl bg-zinc-900/60 border p-2.5 sm:p-3 transition-colors",
+                      dragId === item.id
+                        ? "border-purple-600 opacity-50"
+                        : "border-zinc-800 hover:border-zinc-700"
+                    )}
                   >
+                    <GripVertical
+                      className="h-4 w-4 text-zinc-700 group-hover:text-zinc-500 shrink-0 cursor-grab active:cursor-grabbing"
+                      aria-hidden
+                    />
                     <Button
                       size="icon"
                       className="h-11 w-11 rounded-lg bg-zinc-800 group-hover:bg-purple-600 transition-colors shrink-0"
@@ -381,6 +438,17 @@ export function FolderDialog({
             </div>
           )}
         </div>
+
+        {/* Drag rows to arrange; this puts them back on episode order. */}
+        {isArranged && (
+          <button
+            onClick={() => onResetOrder()}
+            className="mt-2 inline-flex items-center gap-1.5 text-[11px] text-zinc-500 hover:text-zinc-300 transition-colors"
+          >
+            <ArrowDownAZ className="h-3.5 w-3.5" />
+            Reset to episode order
+          </button>
+        )}
 
         {/* Add torrent to this folder */}
         <div className="pt-3 border-t border-zinc-800 space-y-3">

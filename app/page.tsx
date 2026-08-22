@@ -103,6 +103,8 @@ function LibraryView() {
     setFolderCategory,
     deleteFolder,
     clearFolderCache,
+    reorderFolder,
+    resetFolderOrder,
   } = useLibrary();
 
   const { records: watchRecords, forget: forgetWatchRecord } = useWatchProgress();
@@ -804,6 +806,8 @@ function LibraryView() {
           onDeleteItem={(id) => deleteItem(id)}
           onMoveOut={(id) => moveItem(id, null)}
           onClearFolderCache={() => clearFolderCache(openFolder.id)}
+          onReorder={(orderedIds) => reorderFolder(openFolder.id, orderedIds)}
+          onResetOrder={() => resetFolderOrder(openFolder.id)}
           onRename={(name) => renameFolder(openFolder.id, name)}
           onSetCategory={(category) => setFolderCategory(openFolder.id, category)}
           onDeleteFolder={(opts) => deleteFolder(openFolder.id, opts)}

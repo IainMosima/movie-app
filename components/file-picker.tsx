@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { sortByEpisode } from "@/lib/episode-order";
 
 interface TorrentFile {
   index: number;
@@ -226,7 +227,10 @@ export function FilePicker({
 
   const handlePlay = (fileIndex: number) => {
     if (infoHash) {
-      const file = files[fileIndex];
+      // Look up by the torrent's own index, not by array position. They happen
+      // to coincide today because the server emits files in index order, but
+      // any reordering server-side would silently play the wrong file.
+      const file = files.find((f) => f.index === fileIndex);
       onSelectFile(infoHash, fileIndex, file?.name || "video");
     }
   };
@@ -283,9 +287,12 @@ export function FilePicker({
     return File;
   };
 
-  const videoFiles = files
-    .filter((f) => f.isVideo)
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
+  // Torrent file order is not episode order — a pack in the library lists
+  // E06, E02, E07, E01, ... — so sort on the parsed episode number.
+  const videoFiles = sortByEpisode(
+    files.filter((f) => f.isVideo),
+    (f) => f.name
+  );
   const otherFiles = files.filter((f) => !f.isVideo);
 
   return (

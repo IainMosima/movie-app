@@ -151,6 +151,22 @@ export function useLibrary() {
     return json;
   };
 
+  const reorderFolder = async (id: string, orderedIds: string[]) => {
+    const res = await fetch(`/api/folders/${id}/order`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ orderedIds }),
+    });
+    if (!res.ok) throw new Error("Failed to save order");
+    await mutate();
+  };
+
+  const resetFolderOrder = async (id: string) => {
+    const res = await fetch(`/api/folders/${id}/order`, { method: "DELETE" });
+    if (!res.ok) throw new Error("Failed to reset order");
+    await mutate();
+  };
+
   return {
     items: data?.items || [],
     folders: data?.folders || [],
@@ -167,6 +183,8 @@ export function useLibrary() {
     setFolderCategory,
     deleteFolder,
     clearFolderCache,
+    reorderFolder,
+    resetFolderOrder,
     refresh: mutate,
   };
 }
