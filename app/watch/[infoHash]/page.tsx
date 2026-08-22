@@ -273,6 +273,28 @@ export default function WatchPage({ params }: WatchPageProps) {
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [infoHash]);
 
+  // Own the back gesture instead of leaving it to the history stack.
+  //
+  // A player tab restored by the browser on startup — or opened straight from a
+  // link or bookmark — has no entry behind it, so back tries to close the tab
+  // rather than return to the library. Pushing a sentinel entry on mount gives
+  // back something to pop, and we turn that pop into a real in-app navigation
+  // to the card this player was opened from. Leaving unmounts the page, so the
+  // usual cleanup still flushes the watch position and ends the session.
+  useEffect(() => {
+    window.history.pushState({ playerSentinel: true }, "");
+
+    // Next's own router also handles popstate and re-renders this route, so a
+    // replace() issued inside the event is overridden. Deferring by a tick lets
+    // its handling settle first, and our navigation then sticks.
+    const handlePop = () => {
+      setTimeout(() => router.replace(returnTo), 0);
+    };
+
+    window.addEventListener("popstate", handlePop);
+    return () => window.removeEventListener("popstate", handlePop);
+  }, [router, returnTo]);
+
   // Probe for durationSec — needed by the seek bar. Retries until MKV header is on disk.
   useEffect(() => {
     if (!streamUrl) {
