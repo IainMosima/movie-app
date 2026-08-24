@@ -39,6 +39,7 @@ import {
 import { isValidTorrentInput } from "@/lib/torrent-utils";
 import { cn } from "@/lib/utils";
 import { sortFolderItems } from "@/lib/episode-order";
+import { ScrollPager } from "@/components/scroll-pager";
 import type {
   LibraryFolderWithUsage,
   LibraryItemWithUsage,
@@ -324,7 +325,7 @@ export function FolderDialog({
         </div>
 
         {/* Items */}
-        <div className="flex-1 overflow-y-auto -mr-2 pr-2 py-2">
+        <ScrollPager className="-mr-2 pr-2 py-2">
           {items.length === 0 ? (
             <p className="text-sm text-zinc-600 text-center py-10 px-4">
               Nothing here yet — add episodes one magnet at a time below.
@@ -437,7 +438,7 @@ export function FolderDialog({
               })}
             </div>
           )}
-        </div>
+        </ScrollPager>
 
         {/* Drag rows to arrange; this puts them back on episode order. */}
         {isArranged && (

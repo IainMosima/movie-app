@@ -25,6 +25,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { sortByEpisode } from "@/lib/episode-order";
+import { ScrollPager } from "@/components/scroll-pager";
 
 interface TorrentFile {
   index: number;
@@ -76,44 +77,6 @@ export function FilePicker({
   const [statusMessage, setStatusMessage] = useState("Starting...");
   const pollRef = useRef<NodeJS.Timeout | null>(null);
   const startTimeRef = useRef<number>(0);
-
-  // Scroll controls for TV
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const [canScrollUp, setCanScrollUp] = useState(false);
-  const [canScrollDown, setCanScrollDown] = useState(false);
-
-  const updateScrollState = () => {
-    const container = scrollContainerRef.current;
-    if (!container) return;
-    setCanScrollUp(container.scrollTop > 0);
-    setCanScrollDown(
-      container.scrollTop < container.scrollHeight - container.clientHeight - 5
-    );
-  };
-
-  const scrollBy = (amount: number) => {
-    const container = scrollContainerRef.current;
-    if (!container) return;
-    container.scrollBy({ top: amount, behavior: "smooth" });
-  };
-
-  useEffect(() => {
-    const container = scrollContainerRef.current;
-    if (!container) return;
-
-    // Initial check
-    updateScrollState();
-
-    container.addEventListener("scroll", updateScrollState);
-    return () => container.removeEventListener("scroll", updateScrollState);
-  }, [files]);
-
-  // Update scroll state when files change
-  useEffect(() => {
-    // Small delay to let DOM update
-    const timer = setTimeout(updateScrollState, 100);
-    return () => clearTimeout(timer);
-  }, [files]);
 
   useEffect(() => {
     if (open && magnet) {
@@ -400,60 +363,7 @@ export function FilePicker({
             </div>
 
             {/* Scroll container with TV-friendly buttons */}
-            <div className="flex-1 flex gap-2 min-h-0">
-              {/* Scroll buttons — for TV remotes. Hidden on touch screens, where
-                  they'd eat a third of the width and swiping works anyway. */}
-              <div className="hidden sm:flex flex-col justify-center gap-3 py-4">
-                <button
-                  type="button"
-                  onClick={() => scrollBy(-250)}
-                  onMouseUp={() => canScrollUp && scrollBy(-250)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      scrollBy(-250);
-                    }
-                  }}
-                  disabled={!canScrollUp}
-                  className={cn(
-                    "h-14 w-14 rounded-xl flex items-center justify-center transition-all",
-                    "focus:outline-none focus:ring-2 focus:ring-purple-500",
-                    canScrollUp
-                      ? "bg-zinc-800 hover:bg-purple-600 active:bg-purple-700 text-white cursor-pointer"
-                      : "bg-zinc-800/50 text-zinc-600 cursor-not-allowed"
-                  )}
-                >
-                  <ChevronUp className="h-7 w-7" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => scrollBy(250)}
-                  onMouseUp={() => canScrollDown && scrollBy(250)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      scrollBy(250);
-                    }
-                  }}
-                  disabled={!canScrollDown}
-                  className={cn(
-                    "h-14 w-14 rounded-xl flex items-center justify-center transition-all",
-                    "focus:outline-none focus:ring-2 focus:ring-purple-500",
-                    canScrollDown
-                      ? "bg-zinc-800 hover:bg-purple-600 active:bg-purple-700 text-white cursor-pointer"
-                      : "bg-zinc-800/50 text-zinc-600 cursor-not-allowed"
-                  )}
-                >
-                  <ChevronDown className="h-7 w-7" />
-                </button>
-              </div>
-
-              {/* File list */}
-              <div
-                ref={scrollContainerRef}
-                className="flex-1 overflow-y-auto scrollbar-visible -mr-6 pr-6"
-                style={{ scrollbarWidth: 'auto', scrollbarColor: '#8b5cf6 #27272a' }}
-              >
+            <ScrollPager className="scrollbar-visible -mr-6 pr-6">
               <div className="space-y-4 py-2 pr-2">
                 {/* Video files */}
                 {videoFiles.length > 0 && (
@@ -559,8 +469,7 @@ export function FilePicker({
                   </div>
                 )}
               </div>
-              </div>
-            </div>
+            </ScrollPager>
 
             {/* Actions */}
             <div className="flex justify-end pt-4 border-t border-zinc-800">

@@ -6,7 +6,7 @@
   "prebufferSeconds": 90,
   "bufferSizeMB": 200,
   "prebufferMode": "strict",
-  "autoPurgePrevious": false,
+  "autoPurgePrevious": true,
   "prefetchNextEpisode": true,
   "prefetchMinBufferSeconds": 300
 }
