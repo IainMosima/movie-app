@@ -302,7 +302,11 @@ function LibraryView() {
       ]);
       if (!filesRes.ok) throw new Error("Failed to load torrent");
       const data = await filesRes.json();
+      // Without this the port is undefined and the URL reads
+      // "http://host:undefined/stream/..." — which VLC rejects as invalid.
+      if (!portRes.ok) throw new Error("Torrent engine still starting — try again");
       const { port } = await portRes.json();
+      if (!port) throw new Error("Torrent engine still starting — try again");
       const host = window.location.hostname;
       const buildUrl = (fileIndex: number) =>
         `http://${host}:${port}/stream/${data.infoHash}?file=${fileIndex}`;
