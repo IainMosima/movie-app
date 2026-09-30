@@ -129,6 +129,8 @@ function LibraryView() {
   const [isLoadingPlay, setIsLoadingPlay] = useState(false);
   const [vlcUrl, setVlcUrl] = useState<string | null>(null);
   const [vlcCopied, setVlcCopied] = useState(false);
+  // Loose .srt/.vtt files in the torrent — VLC can't fetch them from the stream URL.
+  const [vlcSubs, setVlcSubs] = useState<{ index: number; name: string; url: string }[]>([]);
   // When VLC mode is active, file picker uses this callback instead of navigating
   const [vlcPickerCallback, setVlcPickerCallback] = useState<((fileIndex: number) => void) | null>(null);
 
@@ -311,6 +313,15 @@ function LibraryView() {
       const buildUrl = (fileIndex: number) =>
         `http://${host}:${port}/stream/${data.infoHash}?file=${fileIndex}`;
       const videoFiles = data.files.filter((f: { isVideo: boolean }) => f.isVideo);
+      setVlcSubs(
+        data.files
+          .filter((f: { name: string }) => /\.(srt|vtt)$/i.test(f.name))
+          .map((f: { index: number; name: string }) => ({
+            index: f.index,
+            name: f.name,
+            url: `/api/subtitle/${data.infoHash}?file=${f.index}`,
+          }))
+      );
 
       if (videoFiles.length <= 1) {
         setVlcUrl(buildUrl(data.mainVideoIndex ?? 0));
@@ -327,6 +338,13 @@ function LibraryView() {
     } finally {
       setIsLoadingPlay(false);
     }
+  };
+
+  const copyVlcUrl = () => {
+    if (!vlcUrl) return;
+    navigator.clipboard.writeText(vlcUrl);
+    setVlcCopied(true);
+    setTimeout(() => setVlcCopied(false), 2000);
   };
 
   const handleSelectFile = (
@@ -438,44 +456,67 @@ function LibraryView() {
         </div>
       )}
 
-      {/* VLC stream URL popup */}
-      {vlcUrl && (
-        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center px-4" onClick={() => setVlcUrl(null)}>
-          <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-5 sm:p-6 max-w-lg w-full shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-base font-semibold text-white">Stream URL</h2>
-              <button onClick={() => { setVlcUrl(null); setVlcCopied(false); }} className="text-zinc-500 hover:text-white transition-colors text-lg leading-none h-9 w-9">✕</button>
-            </div>
-            <p className="text-xs text-zinc-500 mb-3">Paste this into VLC → Media → Open Network Stream</p>
-            <div
-              className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-3 font-mono text-xs text-zinc-300 break-all cursor-pointer hover:border-zinc-500 transition-colors mb-4"
-              onClick={() => {
-                navigator.clipboard.writeText(vlcUrl);
-                setVlcCopied(true);
-                setTimeout(() => setVlcCopied(false), 2000);
-              }}
-              title="Click to copy"
-            >
-              {vlcUrl}
-            </div>
-            <div className="flex flex-col sm:flex-row gap-2">
-              <Button
-                className="flex-1 h-11"
-                onClick={() => {
-                  navigator.clipboard.writeText(vlcUrl);
-                  setVlcCopied(true);
-                  setTimeout(() => setVlcCopied(false), 2000);
-                }}
-              >
-                {vlcCopied ? "Copied!" : "Copy URL"}
-              </Button>
-              <Button variant="outline" className="border-zinc-700 h-11" onClick={() => { setVlcUrl(null); setVlcCopied(false); }}>
-                Close
-              </Button>
-            </div>
+      {/* VLC stream URL popup — a Dialog so it stacks above the folder dialog */}
+      <Dialog
+        open={!!vlcUrl}
+        onOpenChange={(o) => {
+          if (!o) {
+            setVlcUrl(null);
+            setVlcCopied(false);
+          }
+        }}
+      >
+        <DialogContent className="bg-zinc-900 border-zinc-700 max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="text-base">Stream URL</DialogTitle>
+          </DialogHeader>
+          <p className="text-xs text-zinc-500">Paste this into VLC → Media → Open Network Stream</p>
+          <div
+            className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-3 font-mono text-xs text-zinc-300 break-all cursor-pointer hover:border-zinc-500 transition-colors"
+            onClick={copyVlcUrl}
+            title="Click to copy"
+          >
+            {vlcUrl}
           </div>
-        </div>
-      )}
+          {vlcSubs.length > 0 && (
+            <div>
+              <p className="text-xs text-zinc-500 mb-2">
+                Subtitles: download one, then drag it onto the VLC window.
+              </p>
+              <div className="max-h-32 overflow-y-auto space-y-1">
+                {vlcSubs.map((sub) => (
+                  <a
+                    key={sub.index}
+                    href={sub.url}
+                    download={sub.name.replace(/\.srt$/i, ".vtt")}
+                    className="block text-xs text-purple-400 hover:text-purple-300 truncate"
+                  >
+                    {sub.name}
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+          <p className="text-xs text-zinc-500">
+            Subtitles built into the video show up in VLC under Subtitle → Sub Track.
+          </p>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <Button className="flex-1 h-11" onClick={copyVlcUrl}>
+              {vlcCopied ? "Copied!" : "Copy URL"}
+            </Button>
+            <Button
+              variant="outline"
+              className="border-zinc-700 h-11"
+              onClick={() => {
+                setVlcUrl(null);
+                setVlcCopied(false);
+              }}
+            >
+              Close
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <div className="max-w-3xl mx-auto px-4 py-6 sm:py-8">
         {/* Header */}
