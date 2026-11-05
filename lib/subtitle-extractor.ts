@@ -1,7 +1,7 @@
 import "server-only";
 import { execFile } from "child_process";
 import { join } from "path";
-import { existsSync, mkdirSync, readFileSync } from "fs";
+import { existsSync, mkdirSync, statSync } from "fs";
 import { getDataDir } from "@/lib/data-dir";
 
 function getSubtitleCachePath(): string {
@@ -105,16 +105,22 @@ const extractionPromises = new Map<string, Promise<string | null>>();
 export function extractSubtitleTrack(
   filePath: string,
   streamIndex: number,
-  infoHash: string
+  infoHash: string,
+  fileIndex: number,
+  complete: boolean
 ): Promise<string | null> {
   const cacheDir = join(getSubtitleCachePath(), infoHash);
-  const outPath = join(cacheDir, `stream_${streamIndex}.vtt`);
+  // Keyed per episode file: a season pack has one set of tracks per episode.
+  // An episode still downloading gets re-extracted each time so cues fill in;
+  // only a finished file's extraction is kept for good.
+  const outPath = join(
+    cacheDir,
+    `${complete ? "stream" : "partial"}_${fileIndex}_${streamIndex}.vtt`
+  );
 
-  // Already cached
-  if (existsSync(outPath)) return Promise.resolve(outPath);
+  if (complete && existsSync(outPath)) return Promise.resolve(outPath);
 
-  // Deduplicate concurrent requests
-  const key = `${infoHash}:${streamIndex}`;
+  const key = `${infoHash}:${fileIndex}:${streamIndex}`;
   if (extractionPromises.has(key)) {
     return extractionPromises.get(key)!;
   }
@@ -127,15 +133,14 @@ export function extractSubtitleTrack(
       ["-y", "-i", filePath, "-map", `0:${streamIndex}`, "-c:s", "webvtt", outPath],
       { timeout: 60000 },
       (error) => {
-        if (error) {
-          console.error(
-            `Failed to extract subtitle stream ${streamIndex}:`,
-            error.message
-          );
-          resolve(null);
-        } else {
-          resolve(outPath);
+        if (!error) return resolve(outPath);
+        // A half-downloaded file makes ffmpeg bail at the first missing piece,
+        // but everything up to there is already written and correctly timed.
+        if (!complete && existsSync(outPath) && statSync(outPath).size > 10) {
+          return resolve(outPath);
         }
+        console.error(`Failed to extract subtitle stream ${streamIndex}:`, error.message);
+        resolve(null);
       }
     );
   }).finally(() => {
@@ -144,17 +149,4 @@ export function extractSubtitleTrack(
 
   extractionPromises.set(key, promise);
   return promise;
-}
-
-export function readCachedSubtitle(
-  infoHash: string,
-  streamIndex: number
-): string | null {
-  const outPath = join(
-    getSubtitleCachePath(),
-    infoHash,
-    `stream_${streamIndex}.vtt`
-  );
-  if (!existsSync(outPath)) return null;
-  return readFileSync(outPath, "utf-8");
 }

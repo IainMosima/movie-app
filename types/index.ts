@@ -69,6 +69,7 @@ export interface TorrentFileInfo {
   path: string;
   length: number;
   index: number;
+  progress?: number;
 }
 
 // API response types

@@ -353,31 +353,54 @@ export default function WatchPage({ params }: WatchPageProps) {
     };
   }, [streamUrl]);
 
-  // Fetch subtitle tracks
+  // Fetch this episode's subtitle tracks. Embedded ones are pulled from the
+  // playing file itself, so their timing is the video's own. While the episode
+  // is still downloading, re-pull every minute so cues fill in further.
   useEffect(() => {
+    setSubtitles([]);
+    let timer: ReturnType<typeof setTimeout>;
+    let cancelled = false;
+    // No ?file= means a movie: the server picks the main video itself.
+    const filePart = fileIndex ? `file=${fileIndex}` : "";
+
     const fetchSubtitles = async () => {
+      let retryIn: number | null = 20_000;
       try {
-        const res = await fetch(`/api/subtitle/${infoHash}`);
-        if (!res.ok) return;
-        const data = await res.json();
-        if (data.subtitles?.length > 0) {
-          setSubtitles(
-            data.subtitles.map(
-              (s: { name: string; index?: number; streamIndex?: number; type?: string }) =>
+        const res = await fetch(`/api/subtitle/${infoHash}?${filePart}`);
+        if (res.ok) {
+          const data: {
+            subtitles?: { name: string; index?: number; streamIndex?: number; type?: string }[];
+            complete?: boolean;
+          } = await res.json();
+          const list = data.subtitles ?? [];
+          if (cancelled) return;
+          if (list.length > 0) {
+            setSubtitles(
+              list.map((s) =>
                 s.type === "embedded"
-                  ? { label: s.name, src: `/api/subtitle/${infoHash}?embedded=${s.streamIndex}` }
-                  : { label: s.name.replace(/\.[^.]+$/, ""), src: `/api/subtitle/${infoHash}?file=${s.index}` }
-            )
-          );
+                  ? {
+                      label: s.name,
+                      src: `/api/subtitle/${infoHash}?${filePart}&embedded=${s.streamIndex}&t=${Date.now()}`,
+                    }
+                  : { label: s.name.replace(/\.[^.]+$/, ""), src: `/api/subtitle/${infoHash}?sub=${s.index}` }
+              )
+            );
+            const hasEmbedded = list.some((s) => s.type === "embedded");
+            retryIn = hasEmbedded && !data.complete ? 60_000 : null;
+          }
         }
       } catch (err) {
         console.error("Failed to fetch subtitles:", err);
       }
+      if (!cancelled && retryIn) timer = setTimeout(fetchSubtitles, retryIn);
     };
 
-    const timer = setTimeout(fetchSubtitles, 2000);
-    return () => clearTimeout(timer);
-  }, [infoHash]);
+    timer = setTimeout(fetchSubtitles, 2000);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [infoHash, fileIndex]);
 
   // Once this episode is actually playing, anything else still on disk is dead
   // weight. Runs once per mount; never blocks playback if it fails.

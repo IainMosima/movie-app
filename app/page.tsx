@@ -355,7 +355,7 @@ function LibraryView() {
           .map((f: { index: number; name: string }) => ({
             index: f.index,
             name: f.name,
-            url: `/api/subtitle/${data.infoHash}?file=${f.index}`,
+            url: `/api/subtitle/${data.infoHash}?sub=${f.index}`,
           }))
       );
 

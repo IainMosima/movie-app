@@ -193,6 +193,12 @@
   }
 }
 
+/* On a TV size subtitles to the screen, whatever CSS width the browser claims
+   (older VIDAA reported 960/1280px, newer Odin reports 1920px). */
+.tv .subtitle-overlay {
+  font-size: 2.6vw;
+}
+
 /* Ensure cursor is visible on TV browsers */
 @media (hover: none), (pointer: coarse) {
   .tv-show-cursor,
@@ -203,5 +209,25 @@
   .tv-show-cursor [role="button"],
   .tv-show-cursor a {
     cursor: pointer;
+  }
+}
+.tv .tv-show-cursor,
+.tv .tv-show-cursor * {
+  cursor: auto;
+}
+.tv .tv-show-cursor button,
+.tv .tv-show-cursor [role="button"],
+.tv .tv-show-cursor a {
+  cursor: pointer;
+}
+
+/*
+ * Tailwind 4 positions with the standalone `translate` property, which older TV
+ * browsers ignore — that pushed centred dialogs half off-screen. Fall back to
+ * transform there.
+ */
+@supports not (translate: 0) {
+  [class*="translate-"] {
+    transform: translate(var(--tw-translate-x, 0), var(--tw-translate-y, 0));
   }
 }

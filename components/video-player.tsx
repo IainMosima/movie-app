@@ -91,7 +91,7 @@ export function VideoPlayer({
   const [isPiP, setIsPiP] = useState(false);
   const [activeSubtitleIndex, setActiveSubtitleIndex] = useState<number | null>(null);
   const [activeCueText, setActiveCueText] = useState<string | null>(null);
-  const parsedCuesRef = useRef<Map<number, { start: number; end: number; text: string }[]>>(new Map());
+  const activeCuesRef = useRef<{ start: number; end: number; text: string }[]>([]);
   const [skipIndicator, setSkipIndicator] = useState<{ side: "left" | "right"; show: boolean; seconds: number }>({ side: "left", show: false, seconds: 10 });
   const lastTapRef = useRef<{ time: number; side: "left" | "right" | null }>({ time: 0, side: null });
   const [lastActionTime, setLastActionTime] = useState(0);
@@ -262,26 +262,8 @@ export function VideoPlayer({
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    // Check for actual TV by user agent only (not screen size)
-    const isActualTV = () => {
-      const ua = navigator.userAgent.toLowerCase();
-      return (
-        ua.includes("tv") ||
-        ua.includes("vidaa") ||
-        ua.includes("hisense") ||
-        ua.includes("tizen") ||
-        ua.includes("webos") ||
-        ua.includes("smart-tv") ||
-        ua.includes("smarttv") ||
-        ua.includes("netcast") ||
-        ua.includes("viera") ||
-        ua.includes("nettv") ||
-        ua.includes("appletv") ||
-        ua.includes("roku") ||
-        ua.includes("firetv") ||
-        ua.includes("googletv")
-      );
-    };
+    // Set on <html> by the boot script in app/layout.tsx (user agent based).
+    const isActualTV = () => document.documentElement.classList.contains("tv");
 
     const update = () => {
       const tv = isActualTV();
@@ -546,24 +528,18 @@ export function VideoPlayer({
     const cues: { start: number; end: number; text: string }[] = [];
     const blocks = vttText.replace(/\r\n/g, "\n").split("\n\n");
 
+    // "1:02:03.5", "01:02:03,500", "02:03.500" → seconds. Fractions are
+    // padded so ".5" means half a second, not 5ms.
     const parseTime = (ts: string): number => {
-      const parts = ts.trim().split(":");
-      if (parts.length === 3) {
-        const [h, m, rest] = parts;
-        const [s, ms] = rest.split(".");
-        return parseInt(h) * 3600 + parseInt(m) * 60 + parseInt(s) + parseInt(ms || "0") / 1000;
-      } else if (parts.length === 2) {
-        const [m, rest] = parts;
-        const [s, ms] = rest.split(".");
-        return parseInt(m) * 60 + parseInt(s) + parseInt(ms || "0") / 1000;
-      }
-      return 0;
+      const [clock, frac = "0"] = ts.trim().split(/[.,]/);
+      const secs = clock.split(":").reduce((acc, n) => acc * 60 + parseInt(n, 10), 0);
+      return secs + parseInt(frac.padEnd(3, "0").slice(0, 3), 10) / 1000;
     };
 
     for (const block of blocks) {
       const lines = block.trim().split("\n");
       for (let i = 0; i < lines.length; i++) {
-        const match = lines[i].match(/(\d{1,2}:[\d:.]+)\s*-->\s*(\d{1,2}:[\d:.]+)/);
+        const match = lines[i].match(/(\d{1,2}:[\d:.,]+)\s*-->\s*(\d{1,2}:[\d:.,]+)/);
         if (match) {
           const start = parseTime(match[1]);
           const end = parseTime(match[2]);
@@ -576,25 +552,56 @@ export function VideoPlayer({
     return cues;
   }, []);
 
-  // Fetch and parse subtitle files when subtitles prop changes
+  // Load only the track being shown (a pack can carry 20+ languages). The
+  // page re-sends the list while an episode downloads; keep showing the old
+  // cues until the longer set arrives so nothing flickers.
   useEffect(() => {
-    if (subtitles.length === 0) return;
-    parsedCuesRef.current.clear();
+    if (subtitles.length === 0) {
+      activeCuesRef.current = [];
+      return;
+    }
+    if (activeSubtitleIndex === null) return;
+    const sub = subtitles[activeSubtitleIndex];
+    if (!sub) return;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 60_000);
+    fetch(sub.src, { signal: controller.signal })
+      .then((res) => (res.ok ? res.text() : ""))
+      .then((text) => {
+        const cues = parseVTT(text);
+        if (cues.length > 0) activeCuesRef.current = cues;
+      })
+      .catch(() => {})
+      .finally(() => clearTimeout(timeout));
+    return () => {
+      clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [subtitles, activeSubtitleIndex, parseVTT]);
 
-    subtitles.forEach((sub, i) => {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 10_000);
-      fetch(sub.src, { signal: controller.signal })
-        .then((res) => res.text())
-        .then((text) => {
-          clearTimeout(timeout);
-          parsedCuesRef.current.set(i, parseVTT(text));
-        })
-        .catch(() => {
-          clearTimeout(timeout);
-        });
-    });
-  }, [subtitles, parseVTT]);
+  // Subtitle delay, like VLC's: positive shows lines later. Remembered per
+  // episode (the watch URL), for an external .srt that's slightly off.
+  const delayKey = typeof window === "undefined" ? "" : `subDelay:${window.location.pathname}${window.location.search}`;
+  const [subtitleDelay, setSubtitleDelay] = useState(0);
+  useEffect(() => {
+    if (!delayKey) return;
+    setSubtitleDelay(Number(localStorage.getItem(delayKey)) || 0);
+  }, [delayKey]);
+  const nudgeSubtitles = useCallback(
+    (by: number) => {
+      setSubtitleDelay((prev) => {
+        const next = Math.round((prev + by) * 10) / 10;
+        try {
+          if (next) localStorage.setItem(delayKey, String(next));
+          else localStorage.removeItem(delayKey);
+        } catch {}
+        return next;
+      });
+    },
+    [delayKey]
+  );
+  const subtitleDelayRef = useRef(0);
+  subtitleDelayRef.current = subtitleDelay;
 
   // Update active cue text based on video time
   useEffect(() => {
@@ -606,10 +613,8 @@ export function VideoPlayer({
         setActiveCueText(null);
         return;
       }
-      const cues = parsedCuesRef.current.get(activeSubtitleIndex);
-      if (!cues) { setActiveCueText(null); return; }
-      const t = video.currentTime;
-      const active = cues.find((c) => t >= c.start && t <= c.end);
+      const t = video.currentTime - subtitleDelayRef.current;
+      const active = activeCuesRef.current.find((c) => t >= c.start && t <= c.end);
       setActiveCueText(active ? active.text : null);
     };
 
@@ -618,11 +623,13 @@ export function VideoPlayer({
   }, [activeSubtitleIndex]);
 
   const setActiveSubtitle = useCallback((index: number | null) => {
+    activeCuesRef.current = [];
     setActiveSubtitleIndex(index);
     if (index === null) setActiveCueText(null);
   }, []);
 
   const cycleSubtitles = useCallback(() => {
+    activeCuesRef.current = [];
     setActiveSubtitleIndex((prev) => {
       const next = prev === null ? 0 : prev + 1 >= subtitles.length ? null : prev + 1;
       if (next === null) setActiveCueText(null);
@@ -1454,6 +1461,30 @@ export function VideoPlayer({
                 <Subtitles className="h-7 w-7" />
               </button>
             )}
+            {subtitles.length > 0 && prefersAlwaysOnControls && activeSubtitleIndex !== null && (
+              <div className="flex items-center gap-1 text-white">
+                {([-0.5, 0.5] as const).map((by) => (
+                  <button
+                    key={by}
+                    type="button"
+                    {...handleTVClick(() => nudgeSubtitles(by))}
+                    aria-label={by < 0 ? "Subtitles earlier" : "Subtitles later"}
+                    className={cn(
+                      "flex items-center justify-center rounded-full cursor-pointer h-14 w-14 text-2xl font-semibold",
+                      "hover:bg-white/10 active:bg-white/30",
+                      "focus:bg-white/20 focus:ring-2 focus:ring-white focus:outline-none",
+                      by > 0 && "order-last"
+                    )}
+                  >
+                    {by < 0 ? "−" : "+"}
+                  </button>
+                ))}
+                <span className="text-lg tabular-nums min-w-[4ch] text-center">
+                  {subtitleDelay > 0 ? "+" : ""}
+                  {subtitleDelay.toFixed(1)}s
+                </span>
+              </div>
+            )}
             {subtitles.length > 0 && !prefersAlwaysOnControls && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -1491,6 +1522,30 @@ export function VideoPlayer({
                       {sub.label}
                     </DropdownMenuItem>
                   ))}
+                  {activeSubtitleIndex !== null && (
+                    <div className="flex items-center justify-between gap-2 border-t border-zinc-800 mt-1 pt-1 px-1 text-sm">
+                      <button
+                        type="button"
+                        onClick={() => nudgeSubtitles(-0.5)}
+                        className="rounded px-2 py-1 hover:bg-white/10 cursor-pointer"
+                        aria-label="Subtitles earlier"
+                      >
+                        −0.5s
+                      </button>
+                      <span className="tabular-nums text-zinc-300" title="Subtitle delay">
+                        {subtitleDelay > 0 ? "+" : ""}
+                        {subtitleDelay.toFixed(1)}s
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => nudgeSubtitles(0.5)}
+                        className="rounded px-2 py-1 hover:bg-white/10 cursor-pointer"
+                        aria-label="Subtitles later"
+                      >
+                        +0.5s
+                      </button>
+                    </div>
+                  )}
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
