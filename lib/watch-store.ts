@@ -14,8 +14,9 @@ const MIN_TRACKED_SECONDS = 30;
 const FINISHED_RATIO = 0.92;
 const FINISHED_TAIL_SECONDS = 90;
 
-// Cap the file so it can't grow without bound.
-const MAX_RECORDS = 50;
+// Cap the file so it can't grow without bound. Finished records are the
+// "Watched" tags in the library, so they're the last to go.
+const MAX_RECORDS = 2000;
 
 function getWatchProgressPath(): string {
   return join(getDataDir(), "watch-progress.json");
@@ -36,8 +37,9 @@ export function getWatchProgress(): WatchProgressData {
 function saveWatchProgress(data: WatchProgressData): void {
   const records = data.records
     .slice()
-    .sort((a, b) => b.updatedAt - a.updatedAt)
-    .slice(0, MAX_RECORDS);
+    .sort((a, b) => Number(b.finished) - Number(a.finished) || b.updatedAt - a.updatedAt)
+    .slice(0, MAX_RECORDS)
+    .sort((a, b) => b.updatedAt - a.updatedAt);
   writeFileSync(getWatchProgressPath(), JSON.stringify({ records }, null, 2));
 }
 
@@ -95,9 +97,11 @@ export function upsertRecord(input: {
   positionSec: number;
   durationSec: number;
   title?: string;
+  // Set by "Mark as watched": no playback position needed.
+  finished?: boolean;
 }): WatchRecord | null {
   const { infoHash, fileIndex, positionSec, durationSec } = input;
-  if (!infoHash || positionSec < MIN_TRACKED_SECONDS) return null;
+  if (!infoHash || (!input.finished && positionSec < MIN_TRACKED_SECONDS)) return null;
 
   const data = getWatchProgress();
   const existing = data.records.find((r) => sameTitle(r, infoHash, fileIndex));
@@ -118,6 +122,10 @@ export function upsertRecord(input: {
     updatedAt: Date.now(),
   };
   record.finished = isFinished(record.positionSec, record.durationSec);
+  if (input.finished) {
+    record.finished = true;
+    record.positionSec = record.durationSec || record.positionSec;
+  }
 
   data.records = [record, ...data.records.filter((r) => !sameTitle(r, infoHash, fileIndex))];
   saveWatchProgress(data);

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { listUnfinished, upsertRecord } from "@/lib/watch-store";
+import { getWatchProgress, listUnfinished, upsertRecord } from "@/lib/watch-store";
 
 const ProgressSchema = z.object({
   infoHash: z.string().min(1),
@@ -8,16 +8,21 @@ const ProgressSchema = z.object({
   positionSec: z.number().nonnegative(),
   durationSec: z.number().nonnegative().default(0),
   title: z.string().optional(),
+  finished: z.boolean().optional(),
 });
 
-// GET /api/progress - unfinished titles, most recent first (Continue Watching)
+// GET /api/progress - `records`: unfinished titles, most recent first (Continue
+// Watching). `history`: every record, for the library's watched tags.
 export async function GET() {
   try {
-    return NextResponse.json({ records: listUnfinished() });
+    return NextResponse.json({
+      records: listUnfinished(),
+      history: getWatchProgress().records,
+    });
   } catch (error) {
     console.error("Failed to read watch progress:", error);
     // Never break the home page over progress tracking.
-    return NextResponse.json({ records: [] });
+    return NextResponse.json({ records: [], history: [] });
   }
 }
 

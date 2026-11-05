@@ -20,6 +20,8 @@ import {
   ArrowDownAZ,
   Film,
   Tv,
+  CircleCheck,
+  CircleDashed,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -40,6 +42,7 @@ import { isValidTorrentInput } from "@/lib/torrent-utils";
 import { cn } from "@/lib/utils";
 import { sortFolderItems } from "@/lib/episode-order";
 import { ScrollPager } from "@/components/scroll-pager";
+import type { WatchStatus } from "@/hooks/use-watch-progress";
 import type {
   LibraryFolderWithUsage,
   LibraryItemWithUsage,
@@ -68,6 +71,9 @@ interface FolderDialogProps {
   onRename: (name: string) => Promise<unknown>;
   onSetCategory: (category: LibraryCategory) => Promise<unknown>;
   onDeleteFolder: (opts: { deleteItems: boolean }) => Promise<unknown>;
+  statusFor: (item: LibraryItemWithUsage) => WatchStatus;
+  onMarkWatched: (item: LibraryItemWithUsage) => void;
+  onMarkUnwatched: (item: LibraryItemWithUsage) => void;
 }
 
 export function FolderDialog({
@@ -88,6 +94,9 @@ export function FolderDialog({
   onRename,
   onSetCategory,
   onDeleteFolder,
+  statusFor,
+  onMarkWatched,
+  onMarkUnwatched,
 }: FolderDialogProps) {
   const [busy, setBusy] = useState<string | null>(null);
   // Drag-to-arrange. `draft` holds the in-flight order so rows follow the
@@ -335,6 +344,7 @@ export function FolderDialog({
               {shown.map((item) => {
                 const isBusy = busy === item.id;
                 const cached = item.cachedBytes > 0;
+                const status = statusFor(item);
                 return (
                   <div
                     key={item.id}
@@ -344,7 +354,7 @@ export function FolderDialog({
                     onDrop={() => handleDrop(item.id)}
                     onDragEnd={() => setDragId(null)}
                     className={cn(
-                      "group flex items-center gap-2 sm:gap-3 rounded-xl bg-zinc-900/60 border p-2.5 sm:p-3 transition-colors",
+                      "group relative overflow-hidden flex items-center gap-2 sm:gap-3 rounded-xl bg-zinc-900/60 border p-2.5 sm:p-3 transition-colors",
                       dragId === item.id
                         ? "border-purple-600 opacity-50"
                         : "border-zinc-800 hover:border-zinc-700"
@@ -372,6 +382,15 @@ export function FolderDialog({
                           </span>
                         ) : (
                           "not cached"
+                        )}
+                        {status.state === "watched" && (
+                          <span className="ml-1.5 inline-flex items-center gap-1 text-emerald-300">
+                            <CircleCheck className="h-3 w-3" />
+                            Watched
+                          </span>
+                        )}
+                        {status.state === "watching" && (
+                          <span className="text-purple-300/90"> · {status.label}</span>
                         )}
                       </p>
                     </div>
@@ -418,6 +437,17 @@ export function FolderDialog({
                           <MonitorPlay className="h-4 w-4" />
                           Get VLC stream URL
                         </DropdownMenuItem>
+                        {status.state === "watched" ? (
+                          <DropdownMenuItem onSelect={() => onMarkUnwatched(item)}>
+                            <CircleDashed className="h-4 w-4" />
+                            Mark as unwatched
+                          </DropdownMenuItem>
+                        ) : (
+                          <DropdownMenuItem onSelect={() => onMarkWatched(item)}>
+                            <CircleCheck className="h-4 w-4" />
+                            Mark as watched
+                          </DropdownMenuItem>
+                        )}
                         <DropdownMenuSeparator className="bg-zinc-800" />
                         <DropdownMenuItem onSelect={() => onMoveOut(item.id)}>
                           <FolderOutput className="h-4 w-4" />
@@ -433,6 +463,15 @@ export function FolderDialog({
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
+
+                    {status.state === "watching" && (
+                      <div className="absolute left-0 right-0 bottom-0 h-1 bg-zinc-800">
+                        <div
+                          className="h-full bg-purple-600"
+                          style={{ width: `${Math.max(2, status.pct)}%` }}
+                        />
+                      </div>
+                    )}
                   </div>
                 );
               })}

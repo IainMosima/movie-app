@@ -2,19 +2,8 @@
 
 import { Play, X, History } from "lucide-react";
 import { formatDuration } from "@/lib/utils";
+import { progressPct, timeLeft } from "@/hooks/use-watch-progress";
 import type { WatchRecord } from "@/types";
-
-function timeLeft(record: WatchRecord): string {
-  if (!record.durationSec || record.durationSec <= record.positionSec) {
-    return `${formatDuration(record.positionSec)} in`;
-  }
-  const remaining = Math.round((record.durationSec - record.positionSec) / 60);
-  if (remaining < 1) return "almost done";
-  if (remaining < 60) return `${remaining} min left`;
-  const hours = Math.floor(remaining / 60);
-  const mins = remaining % 60;
-  return mins ? `${hours}h ${mins}m left` : `${hours}h left`;
-}
 
 export function ContinueWatching({
   records,
@@ -39,9 +28,7 @@ export function ContinueWatching({
       {/* Scrolls sideways on a phone, wraps into a row on wider screens */}
       <div className="flex gap-3 overflow-x-auto pb-2 -mx-4 px-4 sm:mx-0 sm:px-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {records.map((record) => {
-          const pct = record.durationSec
-            ? Math.min(100, Math.round((record.positionSec / record.durationSec) * 100))
-            : 0;
+          const pct = progressPct(record);
 
           return (
             <div
@@ -54,8 +41,8 @@ export function ContinueWatching({
                 aria-label={`Resume ${record.title}`}
               >
                 <div className="flex items-center gap-2.5">
-                  <div className="h-10 w-10 rounded-lg bg-zinc-800 group-hover:bg-purple-600 flex items-center justify-center shrink-0 transition-colors">
-                    <Play className="h-4 w-4 fill-current" />
+                  <div className="h-12 w-12 rounded-lg bg-purple-600 group-hover:bg-purple-500 flex items-center justify-center shrink-0 transition-colors">
+                    <Play className="h-5 w-5 fill-current" />
                   </div>
                   <div className="min-w-0">
                     <p className="text-sm text-zinc-200 truncate">{record.title}</p>

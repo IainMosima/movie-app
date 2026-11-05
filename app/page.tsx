@@ -8,11 +8,15 @@ import { FilePicker } from "@/components/file-picker";
 import { FolderCard } from "@/components/folder-card";
 import { FolderDialog } from "@/components/folder-dialog";
 import { LibraryCard } from "@/components/library-card";
-import { LibraryToolbar, type CategoryFilter } from "@/components/library-toolbar";
+import {
+  LibraryToolbar,
+  type CategoryFilter,
+  type StatusFilter,
+} from "@/components/library-toolbar";
 import { MagnetInput } from "@/components/magnet-input";
 import { StoragePanel } from "@/components/storage-panel";
 import { useLibrary } from "@/hooks/use-library";
-import { useWatchProgress } from "@/hooks/use-watch-progress";
+import { useWatchProgress, watchStatusFor } from "@/hooks/use-watch-progress";
 import {
   Plus,
   Film,
@@ -92,7 +96,14 @@ function LibraryView() {
     resetFolderOrder,
   } = useLibrary();
 
-  const { records: watchRecords, forget: forgetWatchRecord } = useWatchProgress();
+  const {
+    records: watchRecords,
+    history: watchHistory,
+    forget: forgetWatchRecord,
+    markWatched,
+    markUnwatched,
+  } = useWatchProgress();
+  const statusOf = (item: LibraryItemWithUsage) => watchStatusFor(item, watchHistory);
 
   // Which card is open lives in the URL (?folder=, ?listing=) rather than in
   // component state. That way returning from the player — by our own Close
@@ -125,6 +136,7 @@ function LibraryView() {
   // Browse state
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<CategoryFilter>("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("any");
 
   const [isLoadingPlay, setIsLoadingPlay] = useState(false);
   const [vlcUrl, setVlcUrl] = useState<string | null>(null);
@@ -188,19 +200,43 @@ function LibraryView() {
     } as Record<CategoryFilter, number>;
   }, [items, folders]);
 
+  const statusMatches = (item: LibraryItemWithUsage, status: StatusFilter) =>
+    status === "any" || statusOf(item).state === status;
+  // A folder shows under a status when anything inside it has that status.
+  const folderMatches = (folderId: string, status: StatusFilter) =>
+    status === "any" ||
+    items.some((i) => i.folderId === folderId && statusMatches(i, status));
+
+  const statusCounts = {
+    unwatched: 0,
+    watching: 0,
+    watched: 0,
+  } as Record<Exclude<StatusFilter, "any">, number>;
+  for (const s of ["unwatched", "watching", "watched"] as const) {
+    statusCounts[s] =
+      folders.filter((f) => folderMatches(f.id, s)).length +
+      items.filter((i) => !i.folderId && statusMatches(i, s)).length;
+  }
+
   const visibleFolders = folders.filter(
     (f) =>
       (filter === "all" || f.category === filter) &&
+      folderMatches(f.id, statusFilter) &&
       // A folder also matches when something inside it matches the search.
       (matches(f.name) ||
         items.some((i) => i.folderId === f.id && matches(i.name)))
   );
 
   const visibleLooseItems = items.filter(
-    (i) => !i.folderId && (filter === "all" || i.category === filter) && matches(i.name)
+    (i) =>
+      !i.folderId &&
+      (filter === "all" || i.category === filter) &&
+      statusMatches(i, statusFilter) &&
+      matches(i.name)
   );
 
-  const isFiltering = query.trim().length > 0 || filter !== "all";
+  const isFiltering =
+    query.trim().length > 0 || filter !== "all" || statusFilter !== "any";
   const nothingMatched =
     !libraryLoading &&
     isFiltering &&
@@ -551,7 +587,12 @@ function LibraryView() {
 
         {/* Storage */}
         <div className="mb-6 sm:mb-8">
-          <StoragePanel />
+          <StoragePanel
+            onPlay={(id) => {
+              const item = items.find((i) => i.id === id);
+              if (item) handlePlayMagnet(item.magnet, item.name, { itemId: item.id });
+            }}
+          />
         </div>
 
         {/* Library */}
@@ -705,6 +746,9 @@ function LibraryView() {
               filter={filter}
               onFilterChange={setFilter}
               counts={counts}
+              status={statusFilter}
+              onStatusChange={setStatusFilter}
+              statusCounts={statusCounts}
             />
           )}
 
@@ -723,6 +767,11 @@ function LibraryView() {
                   key={folder.id}
                   folder={folder}
                   onOpen={() => openFolderCard(folder.id)}
+                  watchedCount={
+                    items.filter(
+                      (i) => i.folderId === folder.id && statusOf(i).state === "watched"
+                    ).length
+                  }
                 />
               ))}
             </div>
@@ -745,6 +794,9 @@ function LibraryView() {
                   onVLC={() => handleVLC(item.magnet, item.name)}
                   onMoveToFolder={(folderId) => moveItem(item.id, folderId)}
                   onSetCategory={(category) => setItemCategory(item.id, category)}
+                  status={statusOf(item)}
+                  onMarkWatched={() => markWatched(item)}
+                  onMarkUnwatched={() => markUnwatched(item)}
                 />
               ))}
             </div>
@@ -757,7 +809,7 @@ function LibraryView() {
               <h3 className="font-medium text-zinc-400 mb-1">No matches</h3>
               <p className="text-sm text-zinc-600 mb-4 px-4">
                 Nothing here for{" "}
-                {query.trim() ? `“${query.trim()}”` : "this category"}.
+                {query.trim() ? `“${query.trim()}”` : "this filter"}.
               </p>
               <Button
                 size="sm"
@@ -765,6 +817,7 @@ function LibraryView() {
                 onClick={() => {
                   setQuery("");
                   setFilter("all");
+                  setStatusFilter("any");
                 }}
                 className="border-zinc-700 h-10"
               >
@@ -841,6 +894,9 @@ function LibraryView() {
           onRename={(name) => renameFolder(openFolder.id, name)}
           onSetCategory={(category) => setFolderCategory(openFolder.id, category)}
           onDeleteFolder={(opts) => deleteFolder(openFolder.id, opts)}
+          statusFor={statusOf}
+          onMarkWatched={(item) => markWatched(item)}
+          onMarkUnwatched={(item) => markUnwatched(item)}
         />
       )}
     </main>

@@ -8,9 +8,11 @@ import type { LibraryFolderWithUsage } from "@/types";
 export function FolderCard({
   folder,
   onOpen,
+  watchedCount = 0,
 }: {
   folder: LibraryFolderWithUsage;
   onOpen: () => void;
+  watchedCount?: number;
 }) {
   const isSeries = folder.category === "series";
   const CategoryIcon = isSeries ? Tv : Film;
@@ -36,6 +38,13 @@ export function FolderCard({
             <span className="truncate">
               {folder.itemCount} item{folder.itemCount !== 1 ? "s" : ""}
             </span>
+            {watchedCount > 0 && (
+              <span
+                className={`shrink-0 ${watchedCount >= folder.itemCount ? "text-emerald-300" : "text-zinc-500"}`}
+              >
+                · {watchedCount}/{folder.itemCount} watched
+              </span>
+            )}
           </div>
         </div>
 

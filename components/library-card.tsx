@@ -12,6 +12,8 @@ import {
   FolderInput,
   Film,
   Tv,
+  CircleCheck,
+  CircleDashed,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -29,6 +31,7 @@ import type {
   LibraryFolderWithUsage,
   LibraryCategory,
 } from "@/types";
+import type { WatchStatus } from "@/hooks/use-watch-progress";
 
 export function LibraryCard({
   item,
@@ -40,6 +43,9 @@ export function LibraryCard({
   onVLC,
   onMoveToFolder,
   onSetCategory,
+  status,
+  onMarkWatched,
+  onMarkUnwatched,
 }: {
   item: LibraryItemWithUsage;
   folders: LibraryFolderWithUsage[];
@@ -50,6 +56,9 @@ export function LibraryCard({
   onVLC: () => void;
   onMoveToFolder: (folderId: string | null) => void;
   onSetCategory: (category: LibraryCategory) => void;
+  status: WatchStatus;
+  onMarkWatched: () => void;
+  onMarkUnwatched: () => void;
 }) {
   const [isClearing, setIsClearing] = useState(false);
 
@@ -64,7 +73,7 @@ export function LibraryCard({
 
   return (
     <Card
-      className="group p-3 sm:p-4 bg-zinc-900/50 border-zinc-800 hover:bg-zinc-800/50 hover:border-zinc-700 transition-all cursor-pointer"
+      className="group relative overflow-hidden p-3 sm:p-4 bg-zinc-900/50 border-zinc-800 hover:bg-zinc-800/50 hover:border-zinc-700 transition-all cursor-pointer"
       onClick={onOpen}
     >
       <div className="flex items-center gap-3">
@@ -97,6 +106,15 @@ export function LibraryCard({
                 new Date(item.addedAt).toLocaleDateString()
               )}
             </span>
+            {status.state === "watched" && (
+              <Badge className="shrink-0 bg-emerald-900/40 text-emerald-300 px-1.5 py-0 text-[10px] gap-1">
+                <CircleCheck className="h-3 w-3" />
+                Watched
+              </Badge>
+            )}
+            {status.state === "watching" && (
+              <span className="shrink-0 text-purple-300/90">· {status.label}</span>
+            )}
             {item.quality && (
               <Badge className="hidden sm:inline-flex shrink-0 bg-zinc-800 text-zinc-400 px-1.5 py-0 text-[10px]">
                 {item.quality}
@@ -147,6 +165,18 @@ export function LibraryCard({
               <MonitorPlay className="h-4 w-4" />
               Get VLC stream URL
             </DropdownMenuItem>
+
+            {status.state === "watched" ? (
+              <DropdownMenuItem onSelect={() => onMarkUnwatched()}>
+                <CircleDashed className="h-4 w-4" />
+                Mark as unwatched
+              </DropdownMenuItem>
+            ) : (
+              <DropdownMenuItem onSelect={() => onMarkWatched()}>
+                <CircleCheck className="h-4 w-4" />
+                Mark as watched
+              </DropdownMenuItem>
+            )}
 
             <DropdownMenuSeparator className="bg-zinc-800" />
             <DropdownMenuLabel className="text-zinc-500 text-xs">
@@ -200,6 +230,15 @@ export function LibraryCard({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+
+      {status.state === "watching" && (
+        <div className="absolute left-0 right-0 bottom-0 h-1 bg-zinc-800">
+          <div
+            className="h-full bg-purple-600"
+            style={{ width: `${Math.max(2, status.pct)}%` }}
+          />
+        </div>
+      )}
     </Card>
   );
 }

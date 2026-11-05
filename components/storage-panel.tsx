@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
-import { HardDrive, AlertTriangle, Trash2, Loader2, RefreshCw } from "lucide-react";
+import { HardDrive, AlertTriangle, Trash2, Loader2, RefreshCw, Play } from "lucide-react";
 import { useStorage } from "@/hooks/use-storage";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -24,7 +24,11 @@ const KIND_BADGE: Record<StorageEntry["kind"], { label: string; className: strin
   transcode: { label: "Transcode", className: "bg-zinc-800 text-zinc-400" },
 };
 
-export function StoragePanel() {
+export function StoragePanel({
+  onPlay,
+}: {
+  onPlay?: (libraryItemId: string) => void;
+}) {
   const { report, isLoading, orphanCount, deleteOrphan, deleteAllOrphans, refresh } = useStorage();
   // Whether starting something new reclaims the previous one without asking.
   // Episodes inside one folder are always reclaimed; this covers everything else.
@@ -251,6 +255,17 @@ export function StoragePanel() {
                     <p className="text-[11px] text-zinc-600">{entry.sizeFormatted}</p>
                   </div>
                   <Badge className={`shrink-0 ${badge.className}`}>{badge.label}</Badge>
+                  {entry.kind === "matched" && entry.libraryItemId && onPlay && (
+                    <Button
+                      size="icon"
+                      onClick={() => onPlay(entry.libraryItemId!)}
+                      className="h-10 w-10 rounded-lg bg-purple-600 hover:bg-purple-500 shrink-0"
+                      aria-label={`Play ${entry.name}`}
+                      title="Play"
+                    >
+                      <Play className="h-4 w-4 fill-current" />
+                    </Button>
+                  )}
                   {entry.kind === "orphan" && (
                     <Button
                       size="icon"
