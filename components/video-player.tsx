@@ -30,6 +30,8 @@ interface VideoPlayerProps {
   fallbackSrc?: string;
   title?: string;
   onClose?: () => void;
+  /** Remote STOP: leave the player without prompting. Falls back to onClose. */
+  onStop?: () => void;
   autoPlay?: boolean;
   subtitles?: { label: string; src: string }[];
   strictPrebuffering?: boolean;
@@ -62,6 +64,7 @@ export function VideoPlayer({
   fallbackSrc,
   title,
   onClose,
+  onStop,
   autoPlay = true,
   subtitles = [],
   strictPrebuffering = false,
@@ -245,7 +248,6 @@ export function VideoPlayer({
 
   // Show controls on mouse move
   const handleMouseMove = useCallback(() => {
-    if (prefersAlwaysOnControls) return;
     setShowControls(true);
 
     if (controlsTimeoutRef.current) {
@@ -253,11 +255,13 @@ export function VideoPlayer({
     }
 
     controlsTimeoutRef.current = setTimeout(() => {
-      if (isPlaying) {
+      // Read the video, not isPlaying: the closure is stale if play/pause
+      // happened after the timer was armed (e.g. OK pressed on the remote).
+      if (videoRef.current && !videoRef.current.paused) {
         setShowControls(false);
       }
     }, 3000);
-  }, [isPlaying, prefersAlwaysOnControls]);
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -275,11 +279,12 @@ export function VideoPlayer({
     // No need for media query listener since we only check user agent
   }, []);
 
+  // Paused: keep controls up. Playing: start the idle-hide timer, so a TV
+  // (no mouse) doesn't keep the bars over the picture after autoplay/resume.
   useEffect(() => {
-    if (prefersAlwaysOnControls) {
-      setShowControls(true);
-    }
-  }, [prefersAlwaysOnControls]);
+    if (isPlaying) handleMouseMove();
+    else setShowControls(true);
+  }, [isPlaying, handleMouseMove]);
 
   // Auto-focus container on mount for TV remote to work immediately
   useEffect(() => {
@@ -786,13 +791,22 @@ export function VideoPlayer({
     const key = e.key?.toLowerCase() || "";
     const keyCode = e.keyCode || e.which || 0;
 
+    // Any key wakes the controls and restarts the idle timer. When they were
+    // hidden, OK only reveals them so a remote user doesn't pause by accident.
+    handleMouseMove();
+    if (!showControls && keyCode === 13) {
+      e.preventDefault();
+      return;
+    }
+
     // Smart TV Remote KeyCodes (HbbTV/VIDAA/Tizen/webOS standard)
     // Back: 461, Play: 415, Pause: 411/19, Stop: 413
     // Rewind: 412, FastForward: 417, PlayPause: 503/10252
     // Navigation: 37(Left), 38(Up), 39(Right), 40(Down), 13(OK/Enter)
 
-    // Handle by keyCode first (more reliable on Smart TVs)
-    switch (keyCode) {
+    // Handle by keyCode first (more reliable on Smart TVs). Some VIDAA builds
+    // send Stop as key "MediaStop" with a different keyCode.
+    switch (key === "mediastop" ? 413 : keyCode) {
       // Navigation
       case 37: // Left arrow
         e.preventDefault();
@@ -842,11 +856,17 @@ export function VideoPlayer({
         e.preventDefault();
         if (!video.paused) video.pause();
         return;
-      case 413: // Stop
+      case 413: { // Stop: leave the player. Never rewind — that would lose the spot.
         e.preventDefault();
         video.pause();
-        video.currentTime = 0;
+        const t = video.currentTime;
+        if (Number.isFinite(t) && t > 0) {
+          const d = duration || (Number.isFinite(video.duration) ? video.duration : 0);
+          onProgressRef.current?.(t, d);
+        }
+        (onStop ?? onClose)?.();
         return;
+      }
       case 412: // Rewind
         e.preventDefault();
         skip(-10);
@@ -926,7 +946,7 @@ export function VideoPlayer({
         skip(10);
         break;
     }
-  }, [isFullscreen, onClose, cycleSubtitles]);
+  }, [isFullscreen, onClose, onStop, duration, cycleSubtitles, handleMouseMove, showControls]);
 
   const seekTo = (time: number) => {
     const video = videoRef.current;
@@ -1079,12 +1099,11 @@ export function VideoPlayer({
       role="application"
       aria-label={title ? `${title} player` : "Video player"}
       onMouseMove={handleMouseMove}
-      onMouseLeave={() => isPlaying && !prefersAlwaysOnControls && setShowControls(false)}
+      onMouseLeave={() => isPlaying && setShowControls(false)}
       onPointerDown={() => {
         setShowControls(true);
         containerRef.current?.focus();
       }}
-      onKeyDown={(e) => handleKeyDown(e.nativeEvent)}
     >
       {isUsingFallbackStream && (
         <div className="absolute top-5 right-5 z-20 flex items-center gap-2 rounded-full bg-zinc-900/70 px-4 py-2 text-xs font-medium text-white backdrop-blur">

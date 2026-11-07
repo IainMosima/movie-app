@@ -53,6 +53,14 @@ export function parseEpisode(name: string): EpisodeNumber | null {
   return null;
 }
 
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+/** Standard "S01E01" code for a name, or null when no episode parses. */
+export function episodeCode(name: string): string | null {
+  const parsed = parseEpisode(name);
+  return parsed ? `S${pad2(parsed.season)}E${pad2(parsed.episode)}` : null;
+}
+
 /**
  * Natural string comparison — the one sort in the codebase that already got
  * E2-before-E10 right (it was inlined in the file picker). `numeric` handles
@@ -111,4 +119,26 @@ export function sortFolderItems<
   }
 
   return sortByEpisode(items, (i) => i.name);
+}
+
+// First token that ends a show's name in a release title: season/episode,
+// "Season 2", a year, a resolution or a source tag.
+const RELEASE_JUNK =
+  /\b(s\d{1,2}(e\d{1,3})?|\d{1,2}x\d{2,3}|season|(19|20)\d{2}|\d{3,4}p|web[- ]?(dl|rip)|bluray|brrip|hdtv|x26[45]|h ?26[45])\b/i;
+
+/**
+ * Readable show name from a release or record title:
+ * "IT.Welcome.To.Derry.S01E04.1080p" → "IT Welcome To Derry". Anything after a
+ * " · " is the episode part of our own titles and goes too. Never returns empty:
+ * a name that is all junk comes back as given.
+ */
+export function showName(title: string): string {
+  const spaced = title.split(" · ")[0].replace(/[._]+/g, " ").trim();
+  // Search from the second character so a title that starts with a year
+  // ("2001 A Space Odyssey") keeps it.
+  const cut = spaced.slice(1).search(RELEASE_JUNK);
+  const name = (cut < 0 ? spaced : spaced.slice(0, cut + 1))
+    .replace(/[\s\-([]+$/, "")
+    .trim();
+  return name || title.trim();
 }

@@ -20,12 +20,15 @@ export async function POST(
   const body = await req.json().catch(() => null);
   const fileIndex = body?.fileIndex;
   const fileSize: number = Number(body?.fileSize) || 0;
+  // A user-pressed Download button: kept alongside other downloads, and not
+  // subject to the auto "prefetch next episode" setting.
+  const pin = body?.pin === true;
 
   if (typeof fileIndex !== "number") {
     return NextResponse.json({ error: "Missing fileIndex" }, { status: 400 });
   }
 
-  if (getSettings().prefetchNextEpisode === false) {
+  if (!pin && getSettings().prefetchNextEpisode === false) {
     return NextResponse.json({ prefetching: false, reason: "disabled" });
   }
 
@@ -41,7 +44,7 @@ export async function POST(
     return NextResponse.json({
       prefetching: false,
       reason: "low-disk",
-      message: msg,
+      message: `Not enough space (needs ${formatBytes(fileSize)} + ${formatBytes(FREE_SPACE_FLOOR_BYTES)} reserve, ${formatBytes(disk.freeBytes)} free)`,
       freeFormatted: formatBytes(disk.freeBytes),
     });
   }
@@ -56,7 +59,7 @@ export async function POST(
     const { port } = await portRes.json();
 
     const res = await fetch(
-      `http://localhost:${port}/prefetch/${infoHash}?file=${fileIndex}`,
+      `http://localhost:${port}/prefetch/${infoHash}?file=${fileIndex}${pin ? "&pin=1" : ""}`,
       { method: "POST", signal: AbortSignal.timeout(8000) }
     );
     if (!res.ok) {

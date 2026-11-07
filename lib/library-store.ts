@@ -2,7 +2,13 @@ import "server-only";
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
 import { getDataDir } from "@/lib/data-dir";
-import { sortFolderItems } from "@/lib/episode-order";
+import {
+  episodeCode,
+  parseEpisode,
+  sortFolderItems,
+  type EpisodeNumber,
+} from "@/lib/episode-order";
+import { resolveFolderCategory } from "@/lib/category";
 import type {
   LibraryItem,
   LibraryFolder,
@@ -38,6 +44,36 @@ function newId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/**
+ * Items in a series folder are named by their standard code ("S01E01"): from
+ * the given name, else the magnet's dn=, else one past the folder's highest
+ * episode. Movie folders are left alone.
+ */
+function applyEpisodeName(data: LibraryData, item: LibraryItem): void {
+  const folder = data.folders.find((f) => f.id === item.folderId);
+  if (!folder) return;
+  const siblings = data.items.filter(
+    (i) => i.folderId === folder.id && i.id !== item.id
+  );
+  if (resolveFolderCategory(folder, [...siblings, item]) !== "series") return;
+
+  const dn = new URLSearchParams(item.magnet.split("?")[1] ?? "").get("dn");
+  let code = episodeCode(item.name) ?? episodeCode(dn ?? "");
+  if (!code) {
+    const last = siblings
+      .map((i) => parseEpisode(i.name))
+      .reduce<EpisodeNumber | null>(
+        (max, e) =>
+          e && (!max || e.season > max.season || (e.season === max.season && e.episode > max.episode))
+            ? e
+            : max,
+        null
+      );
+    code = episodeCode(`S${last?.season ?? 1}E${(last?.episode ?? 0) + 1}`);
+  }
+  if (code) item.name = code;
+}
+
 // --- Items ---
 
 export function getAllItems(): LibraryItem[] {
@@ -59,6 +95,7 @@ export function addItem(item: Omit<LibraryItem, "id" | "addedAt">): LibraryItem 
     // silently doing nothing.
     if (item.folderId !== undefined && item.folderId !== existing.folderId) {
       existing.folderId = item.folderId;
+      applyEpisodeName(data, existing);
       saveLibrary(data);
     }
     return existing;
@@ -70,6 +107,7 @@ export function addItem(item: Omit<LibraryItem, "id" | "addedAt">): LibraryItem 
     addedAt: Date.now(),
   };
 
+  applyEpisodeName(data, newItem);
   // Add to beginning (newest first)
   data.items.unshift(newItem);
   saveLibrary(data);
@@ -84,7 +122,9 @@ export function updateItem(
   const index = data.items.findIndex((item) => item.id === id);
   if (index === -1) return null;
 
+  const moved = updates.folderId && updates.folderId !== data.items[index].folderId;
   data.items[index] = { ...data.items[index], ...updates };
+  if (moved) applyEpisodeName(data, data.items[index]);
   saveLibrary(data);
   return data.items[index];
 }

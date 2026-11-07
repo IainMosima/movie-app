@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, Suspense } from "react";
+import { useState, useMemo, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { ContinueWatching } from "@/components/continue-watching";
@@ -14,7 +14,6 @@ import {
   type StatusFilter,
 } from "@/components/library-toolbar";
 import { MagnetInput } from "@/components/magnet-input";
-import { StoragePanel } from "@/components/storage-panel";
 import { useLibrary } from "@/hooks/use-library";
 import { useWatchProgress, watchStatusFor } from "@/hooks/use-watch-progress";
 import {
@@ -29,6 +28,7 @@ import {
 import { isValidTorrentInput, extractTitleFromInput } from "@/lib/torrent-utils";
 import { detectCategory } from "@/lib/category";
 import { watchUrl } from "@/lib/watch-url";
+import { episodeCode } from "@/lib/episode-order";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -139,7 +139,15 @@ function LibraryView() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("any");
 
   const [isLoadingPlay, setIsLoadingPlay] = useState(false);
-  const [vlcUrl, setVlcUrl] = useState<string | null>(null);
+  // Links for the VLC dialog, built server-side so they carry the Mac's LAN
+  // address (a link made on localhost would be useless on a phone).
+  const [vlcLinks, setVlcLinks] = useState<{
+    streamUrl: string;
+    playlistUrl: string;
+    subUrl: string | null;
+    title: string;
+  } | null>(null);
+  const vlcUrl = vlcLinks?.playlistUrl ?? null;
   const [vlcCopied, setVlcCopied] = useState(false);
   // Loose .srt/.vtt files in the torrent — VLC can't fetch them from the stream URL.
   const [vlcSubs, setVlcSubs] = useState<{ index: number; name: string; url: string }[]>([]);
@@ -302,7 +310,9 @@ function LibraryView() {
   // Resuming has to re-add the torrent before navigating: the watch page waits
   // on /api/torrents and would sit on "Finding peers…" forever for a torrent the
   // worker no longer holds. Goes straight to the saved file — never the picker.
-  const handleResume = async (record: WatchRecord) => {
+  const handleResume = async (
+    record: Pick<WatchRecord, "magnet" | "title" | "fileIndex">
+  ) => {
     setIsLoadingPlay(true);
     try {
       const res = await fetch("/api/torrent/files", {
@@ -326,28 +336,48 @@ function LibraryView() {
     }
   };
 
+  // The Continue tile for what follows a finished episode. A known file plays
+  // straight away; a folder item plays like its card; an unloaded pack opens
+  // its episode picker.
+  const handlePlayNext = (next: NonNullable<WatchRecord["upNext"]>) => {
+    if (next.pickFrom) {
+      router.push(homeUrl({ listing: next.pickFrom }), { scroll: false });
+    } else if (next.fileIndex !== undefined) {
+      handleResume({ magnet: next.magnet, title: next.title, fileIndex: next.fileIndex });
+    } else {
+      handlePlayMagnet(next.magnet, next.title, { itemId: next.libraryItemId });
+    }
+  };
+
+  // Fetch the VLC links for one file and open the "Watch in VLC" dialog.
+  const openVlcDialog = async (infoHash: string, fileIndex: number, title: string) => {
+    setIsLoadingPlay(true);
+    try {
+      const res = await fetch(
+        `/api/vlc/${infoHash}?format=json&file=${fileIndex}&title=${encodeURIComponent(title)}`
+      );
+      if (!res.ok) throw new Error("Torrent engine still starting — try again");
+      setVlcLinks({ title, ...(await res.json()) });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to load");
+    } finally {
+      setIsLoadingPlay(false);
+    }
+  };
+
   const handleVLC = async (magnet: string, title?: string) => {
     if (!title) title = extractTitleFromInput(magnet);
     setIsLoadingPlay(true);
     try {
-      const [filesRes, portRes] = await Promise.all([
-        fetch("/api/torrent/files", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ magnet }),
-        }),
-        fetch("/api/worker-port"),
-      ]);
+      const filesRes = await fetch("/api/torrent/files", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ magnet }),
+      });
       if (!filesRes.ok) throw new Error("Failed to load torrent");
       const data = await filesRes.json();
-      // Without this the port is undefined and the URL reads
-      // "http://host:undefined/stream/..." — which VLC rejects as invalid.
-      if (!portRes.ok) throw new Error("Torrent engine still starting — try again");
-      const { port } = await portRes.json();
-      if (!port) throw new Error("Torrent engine still starting — try again");
-      const host = window.location.hostname;
-      const buildUrl = (fileIndex: number) =>
-        `http://${host}:${port}/stream/${data.infoHash}?file=${fileIndex}`;
+      const showLinks = (fileIndex: number) =>
+        openVlcDialog(data.infoHash, fileIndex, title ?? "");
       const videoFiles = data.files.filter((f: { isVideo: boolean }) => f.isVideo);
       setVlcSubs(
         data.files
@@ -360,12 +390,12 @@ function LibraryView() {
       );
 
       if (videoFiles.length <= 1) {
-        setVlcUrl(buildUrl(data.mainVideoIndex ?? 0));
+        await showLinks(data.mainVideoIndex ?? 0);
       } else {
         // Multi-file: open picker, then show URL for chosen file
         setVlcPickerCallback(() => (fileIndex: number) => {
-          setVlcUrl(buildUrl(fileIndex));
           setVlcPickerCallback(null);
+          showLinks(fileIndex);
         });
         setTransientPicker({ magnet, title: title ?? "" });
       }
@@ -376,11 +406,39 @@ function LibraryView() {
     }
   };
 
+  // navigator.clipboard only exists on https/localhost — on a phone opening the
+  // app at http://192.168.x.x it's undefined, so fall back to execCommand.
+  // navigator.clipboard only exists on https/localhost, so on a phone at
+  // http://192.168.x.x we copy from the visible link field instead. iOS only
+  // copies from a real, on-screen, editable field — hence un-readOnly for the
+  // moment of the copy. The text stays selected so long-press → Copy works too.
+  const vlcLinkRef = useRef<HTMLInputElement>(null);
   const copyVlcUrl = () => {
     if (!vlcUrl) return;
-    navigator.clipboard.writeText(vlcUrl);
-    setVlcCopied(true);
-    setTimeout(() => setVlcCopied(false), 2000);
+    const done = () => {
+      setVlcCopied(true);
+      setTimeout(() => setVlcCopied(false), 2000);
+    };
+    const fromField = () => {
+      const el = vlcLinkRef.current;
+      let ok = false;
+      if (el) {
+        el.readOnly = false;
+        el.focus();
+        el.setSelectionRange(0, el.value.length);
+        try {
+          ok = document.execCommand("copy");
+        } catch {
+          ok = false;
+        }
+        el.readOnly = true;
+        el.setSelectionRange(0, el.value.length);
+      }
+      if (ok) done();
+      else toast("Link selected — long-press it and tap Copy");
+    };
+    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(vlcUrl).then(done, fromField);
+    else fromField();
   };
 
   const handleSelectFile = (
@@ -406,7 +464,8 @@ function LibraryView() {
     }
 
     // The picker stays in the URL on purpose: back from the player reopens it.
-    const title = pickerTitle || fileName;
+    const code = episodeCode(fileName);
+    const title = pickerTitle && code ? `${pickerTitle} · ${code}` : pickerTitle || fileName;
     router.push(watchUrl(infoHash, title, fileIndex, homeUrl({})));
   };
 
@@ -497,27 +556,35 @@ function LibraryView() {
         open={!!vlcUrl}
         onOpenChange={(o) => {
           if (!o) {
-            setVlcUrl(null);
+            setVlcLinks(null);
             setVlcCopied(false);
           }
         }}
       >
         <DialogContent className="bg-zinc-900 border-zinc-700 max-w-lg">
           <DialogHeader>
-            <DialogTitle className="text-base">Stream URL</DialogTitle>
+            <DialogTitle className="text-base">Watch in VLC</DialogTitle>
           </DialogHeader>
-          <p className="text-xs text-zinc-500">Paste this into VLC → Media → Open Network Stream</p>
-          <div
-            className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-3 font-mono text-xs text-zinc-300 break-all cursor-pointer hover:border-zinc-500 transition-colors"
-            onClick={copyVlcUrl}
-            title="Click to copy"
-          >
-            {vlcUrl}
-          </div>
+          <p className="text-xs text-zinc-500">
+            Copy this link, then in VLC open Network Stream and paste it. Works on
+            any phone or computer on this Wi-Fi.
+          </p>
+          <input
+            ref={vlcLinkRef}
+            readOnly
+            value={vlcUrl ?? ""}
+            onFocus={(e) => e.currentTarget.select()}
+            aria-label="VLC link"
+            // 16px on phones: smaller text makes iOS zoom the page on focus.
+            className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-3 font-mono text-base sm:text-xs text-zinc-300 focus:outline-none focus:border-purple-500"
+          />
+          <p className="text-xs text-zinc-500">
+            Subtitles turn on by themselves (English). To switch: VLC → Subtitle → Sub Track.
+          </p>
           {vlcSubs.length > 0 && (
             <div>
               <p className="text-xs text-zinc-500 mb-2">
-                Subtitles: download one, then drag it onto the VLC window.
+                Other subtitle files (optional, to load by hand):
               </p>
               <div className="max-h-32 overflow-y-auto space-y-1">
                 {vlcSubs.map((sub) => (
@@ -533,18 +600,20 @@ function LibraryView() {
               </div>
             </div>
           )}
-          <p className="text-xs text-zinc-500">
-            Subtitles built into the video show up in VLC under Subtitle → Sub Track.
-          </p>
+          {vlcLinks && (
+            <p className="text-[11px] text-zinc-600 break-all select-all">
+              Plain video link: {vlcLinks.streamUrl}
+            </p>
+          )}
           <div className="flex flex-col sm:flex-row gap-2">
             <Button className="flex-1 h-11" onClick={copyVlcUrl}>
-              {vlcCopied ? "Copied!" : "Copy URL"}
+              {vlcCopied ? "Copied!" : "Copy link"}
             </Button>
             <Button
               variant="outline"
               className="border-zinc-700 h-11"
               onClick={() => {
-                setVlcUrl(null);
+                setVlcLinks(null);
                 setVlcCopied(false);
               }}
             >
@@ -554,7 +623,7 @@ function LibraryView() {
         </DialogContent>
       </Dialog>
 
-      <div className="max-w-3xl mx-auto px-4 py-6 sm:py-8">
+      <div className="max-w-3xl mx-auto px-5 sm:px-8 py-6 sm:py-8">
         {/* Header */}
         <div className="text-center mb-6 sm:mb-8">
           <h1 className="text-3xl sm:text-4xl font-bold bg-gradient-to-r from-white to-zinc-400 bg-clip-text text-transparent">
@@ -574,26 +643,17 @@ function LibraryView() {
           <MagnetInput onSubmit={handleQuickPlay} />
         </div>
 
-        {/* Continue Watching — hides itself when nothing is in progress */}
+        {/* Continue — hides itself when there's nothing to pick up */}
         {watchRecords.length > 0 && (
           <div className="mb-6 sm:mb-8">
             <ContinueWatching
               records={watchRecords}
               onResume={handleResume}
+              onPlayNext={handlePlayNext}
               onForget={forgetWatchRecord}
             />
           </div>
         )}
-
-        {/* Storage */}
-        <div className="mb-6 sm:mb-8">
-          <StoragePanel
-            onPlay={(id) => {
-              const item = items.find((i) => i.id === id);
-              if (item) handlePlayMagnet(item.magnet, item.name, { itemId: item.id });
-            }}
-          />
-        </div>
 
         {/* Library */}
         <div>
@@ -869,6 +929,11 @@ function LibraryView() {
           magnet={pickerMagnet}
           title={pickerTitle}
           onSelectFile={handleSelectFile}
+          onVLC={(h, i, name) => {
+            // Loose subtitle files are only known on the handleVLC path.
+            if (!vlcPickerCallback) setVlcSubs([]);
+            openVlcDialog(h, i, pickerTitle || name);
+          }}
         />
       )}
 

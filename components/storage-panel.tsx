@@ -103,17 +103,21 @@ export function StoragePanel({
     }
   };
 
+  // Subtitles and transcodes still count toward the footprint, just aren't listed.
+  const visible = (report?.entries ?? []).filter(
+    (e) => e.kind === "matched" || e.kind === "orphan",
+  );
   const disk = report?.disk;
   const freePct =
     disk && disk.totalBytes > 0 ? Math.round((disk.freeBytes / disk.totalBytes) * 100) : null;
 
   return (
-    <Card className="p-4 bg-zinc-900/50 border-zinc-800">
+    <Card className="p-6 bg-zinc-900/50 border-zinc-800">
       <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2 text-zinc-300">
-          <HardDrive className="h-4 w-4" />
-          <span className="text-sm font-semibold">Storage</span>
-        </div>
+        <h2 className="font-semibold flex items-center gap-2">
+          <HardDrive className="h-4 w-4 text-zinc-400" />
+          Storage
+        </h2>
         <button
           onClick={() => refresh()}
           className="text-zinc-600 hover:text-zinc-300 transition-colors h-9 w-9 flex items-center justify-center -mr-2"
@@ -133,11 +137,13 @@ export function StoragePanel({
         className="w-full flex items-center justify-between gap-3 mb-3 py-2 px-2.5 -mx-0.5 rounded-lg hover:bg-zinc-800/40 transition-colors text-left disabled:opacity-50"
       >
         <span className="min-w-0">
-          <span className="block text-xs text-zinc-300">Auto-purge previous</span>
-          <span className="block text-[11px] text-zinc-600 mt-0.5">
+          <span className="block text-sm text-zinc-300">
+            Delete what I&apos;ve finished when I start something new
+          </span>
+          <span className="block text-xs text-zinc-500 mt-0.5">
             {autoPurge
-              ? "Starting something new clears the last one automatically"
-              : "You'll be asked before the last one is cleared"}
+              ? "Only things you've watched to the end are removed"
+              : "You'll be asked before anything is deleted"}
           </span>
         </span>
         <span
@@ -162,10 +168,12 @@ export function StoragePanel({
         className="w-full flex items-center justify-between gap-3 mb-3 py-2 px-2.5 -mx-0.5 rounded-lg hover:bg-zinc-800/40 transition-colors text-left disabled:opacity-50"
       >
         <span className="min-w-0">
-          <span className="block text-xs text-zinc-300">Prefetch next episode</span>
-          <span className="block text-[11px] text-zinc-600 mt-0.5">
+          <span className="block text-sm text-zinc-300">
+            Download the next episode while I watch
+          </span>
+          <span className="block text-xs text-zinc-500 mt-0.5">
             {prefetch
-              ? "Pulls the next one once the current is well buffered"
+              ? "Starts once the current one is well buffered"
               : "Each episode downloads only when you start it"}
           </span>
         </span>
@@ -236,23 +244,23 @@ export function StoragePanel({
         <div className="flex justify-center py-4">
           <Loader2 className="h-5 w-5 animate-spin text-zinc-600" />
         </div>
-      ) : report && report.entries.length > 0 ? (
+      ) : visible.length > 0 ? (
         <div className="space-y-1.5">
-          {report.entries
-            .slice()
+          {visible
             .sort((a, b) => b.sizeBytes - a.sizeBytes)
             .map((entry) => {
               const badge = KIND_BADGE[entry.kind];
+              const label = entry.itemName ?? entry.name;
               return (
                 <div
                   key={entry.name}
                   className="flex items-center gap-3 rounded-lg bg-zinc-900/60 px-3 py-2"
                 >
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs text-zinc-300 truncate" title={entry.name}>
-                      {entry.name}
+                    <p className="text-sm text-zinc-300 truncate" title={entry.name}>
+                      {label}
                     </p>
-                    <p className="text-[11px] text-zinc-600">{entry.sizeFormatted}</p>
+                    <p className="text-xs text-zinc-500">{entry.sizeFormatted}</p>
                   </div>
                   <Badge className={`shrink-0 ${badge.className}`}>{badge.label}</Badge>
                   {entry.kind === "matched" && entry.libraryItemId && onPlay && (
@@ -260,7 +268,7 @@ export function StoragePanel({
                       size="icon"
                       onClick={() => onPlay(entry.libraryItemId!)}
                       className="h-10 w-10 rounded-lg bg-purple-600 hover:bg-purple-500 shrink-0"
-                      aria-label={`Play ${entry.name}`}
+                      aria-label={`Play ${label}`}
                       title="Play"
                     >
                       <Play className="h-4 w-4 fill-current" />
@@ -288,7 +296,7 @@ export function StoragePanel({
             })}
         </div>
       ) : (
-        <p className="text-xs text-zinc-600 py-2 text-center">Cache is empty — nothing on disk.</p>
+        <p className="text-xs text-zinc-600 py-2 text-center">Nothing downloaded.</p>
       )}
     </Card>
   );

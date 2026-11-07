@@ -22,6 +22,7 @@ import {
   Tv,
   CircleCheck,
   CircleDashed,
+  Download,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -38,7 +39,8 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { isValidTorrentInput } from "@/lib/torrent-utils";
+import { isValidTorrentInput, extractInfoHash } from "@/lib/torrent-utils";
+import { useDownloadProgress } from "@/hooks/use-download-progress";
 import { cn } from "@/lib/utils";
 import { sortFolderItems } from "@/lib/episode-order";
 import { ScrollPager } from "@/components/scroll-pager";
@@ -119,6 +121,32 @@ export function FolderDialog({
         .map((id) => items.find((i) => i.id === id))
         .filter(Boolean) as LibraryItemWithUsage[])
     : ordered;
+  const downloads = useDownloadProgress(
+    open,
+    items.map((i) => ({
+      id: i.id,
+      infoHash: i.infoHash ?? extractInfoHash(i.magnet),
+      fileIndex: i.fileIndex ?? null,
+    }))
+  );
+
+  // Add (or reuse) the torrent, then pin the item's file to download in full.
+  const startDownload = (item: LibraryItemWithUsage) =>
+    downloads.start(item.id, async () => {
+      const res = await fetch("/api/torrent/files", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ magnet: item.magnet }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to load torrent");
+      const fileIndex: number = item.fileIndex ?? data.mainVideoIndex;
+      const file = (data.files as { index: number; size: number }[]).find(
+        (f) => f.index === fileIndex
+      );
+      return { infoHash: data.infoHash, fileIndex, fileSize: file?.size ?? 0 };
+    });
+
   const isArranged = items.length > 0 && items.every((i) => i.sortOrder !== undefined);
 
   const handleDrop = async (targetId: string) => {
@@ -170,6 +198,7 @@ export function FolderDialog({
       try {
         const res = await onClearItemCache(item.id);
         toast.success(`Reclaimed ${res.reclaimedFormatted ?? item.cachedFormatted}`);
+        await downloads.refresh();
       } catch {
         toast.error("Failed to clear cache");
       }
@@ -345,6 +374,12 @@ export function FolderDialog({
                 const isBusy = busy === item.id;
                 const cached = item.cachedBytes > 0;
                 const status = statusFor(item);
+                const dl = downloads.status({
+                  id: item.id,
+                  infoHash: item.infoHash ?? extractInfoHash(item.magnet),
+                  fileIndex: item.fileIndex ?? null,
+                });
+                const ready = dl.progress !== undefined && dl.progress >= 1;
                 return (
                   <div
                     key={item.id}
@@ -354,14 +389,14 @@ export function FolderDialog({
                     onDrop={() => handleDrop(item.id)}
                     onDragEnd={() => setDragId(null)}
                     className={cn(
-                      "group relative overflow-hidden flex items-center gap-2 sm:gap-3 rounded-xl bg-zinc-900/60 border p-2.5 sm:p-3 transition-colors",
+                      "group relative overflow-hidden flex flex-wrap sm:flex-nowrap items-center gap-x-3 gap-y-1 rounded-xl bg-zinc-900/60 border p-2.5 sm:p-3 transition-colors",
                       dragId === item.id
                         ? "border-purple-600 opacity-50"
                         : "border-zinc-800 hover:border-zinc-700"
                     )}
                   >
                     <GripVertical
-                      className="h-4 w-4 text-zinc-700 group-hover:text-zinc-500 shrink-0 cursor-grab active:cursor-grabbing"
+                      className="hidden sm:block h-4 w-4 text-zinc-700 group-hover:text-zinc-500 shrink-0 cursor-grab active:cursor-grabbing"
                       aria-hidden
                     />
                     <Button
@@ -392,8 +427,52 @@ export function FolderDialog({
                         {status.state === "watching" && (
                           <span className="text-purple-300/90"> · {status.label}</span>
                         )}
+                        {ready ? (
+                          <span className="ml-1.5 text-emerald-300">· ✓ Ready</span>
+                        ) : (
+                          dl.progress !== undefined &&
+                          dl.progress > 0 && (
+                            <span className="ml-1.5 text-purple-300 tabular-nums">
+                              · ↓ {Math.floor(dl.progress * 100)}%
+                            </span>
+                          )
+                        )}
                       </p>
+                      {dl.error && (
+                        <p className="text-[11px] text-red-400 mt-0.5">{dl.error}</p>
+                      )}
                     </div>
+
+                    {/* Phone: actions on their own line so the name keeps the width */}
+                    <div className="flex w-full sm:w-auto items-center justify-end gap-1 shrink-0">
+                    {!ready && (
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => startDownload(item)}
+                        disabled={dl.busy}
+                        className="h-10 w-10 text-zinc-500 hover:text-purple-300 shrink-0"
+                        aria-label={`Download ${item.name}`}
+                        title="Download in the background so it's ready to watch"
+                      >
+                        {dl.busy ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Download className="h-4 w-4" />
+                        )}
+                      </Button>
+                    )}
+
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => onVLC(item)}
+                      className="h-10 w-10 text-zinc-500 hover:text-purple-300 shrink-0"
+                      aria-label="Get VLC link"
+                      title="Get VLC link"
+                    >
+                      <MonitorPlay className="h-4 w-4" />
+                    </Button>
 
                     {cached && (
                       <Button
@@ -433,10 +512,6 @@ export function FolderDialog({
                           <ListVideo className="h-4 w-4" />
                           Browse files
                         </DropdownMenuItem>
-                        <DropdownMenuItem onSelect={() => onVLC(item)}>
-                          <MonitorPlay className="h-4 w-4" />
-                          Get VLC stream URL
-                        </DropdownMenuItem>
                         {status.state === "watched" ? (
                           <DropdownMenuItem onSelect={() => onMarkUnwatched(item)}>
                             <CircleDashed className="h-4 w-4" />
@@ -463,6 +538,7 @@ export function FolderDialog({
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
+                    </div>
 
                     {status.state === "watching" && (
                       <div className="absolute left-0 right-0 bottom-0 h-1 bg-zinc-800">

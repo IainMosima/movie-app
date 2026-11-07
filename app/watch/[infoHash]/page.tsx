@@ -42,6 +42,10 @@ export default function WatchPage({ params }: WatchPageProps) {
     fromParam && fromParam.startsWith("/") && !fromParam.startsWith("//")
       ? fromParam
       : "/";
+  // Remote STOP lands on the folder the episode was opened from (home encodes
+  // it as ?folder= in `from`), dropping any open picker; otherwise home.
+  const stopFolder = new URLSearchParams(returnTo.split("?")[1] ?? "").get("folder");
+  const stopTarget = stopFolder ? `/?folder=${encodeURIComponent(stopFolder)}` : "/";
   const sessionIdRef = useRef<string | null>(null);
   const hasStartedRef = useRef(false);
   const [subtitles, setSubtitles] = useState<{ label: string; src: string }[]>([]);
@@ -79,7 +83,9 @@ export default function WatchPage({ params }: WatchPageProps) {
   const { nextLabel, nextFileIndex, nextFileSize, goNext } = useNextEpisode(
     infoHash,
     fileIndexNum,
-    returnTo
+    returnTo,
+    lastPositionRef,
+    title
   );
 
 
@@ -503,6 +509,12 @@ export default function WatchPage({ params }: WatchPageProps) {
     router.push(returnTo);
   }, [router, returnTo]);
 
+  // Remote STOP: just leave. No clear-cache prompt, nothing deleted; the
+  // player already reported the exact position and unmount flushes it again.
+  const handleStop = useCallback(() => {
+    router.push(stopTarget);
+  }, [router, stopTarget]);
+
   const handleClearAndClose = useCallback(async () => {
     setIsClearing(true);
     try {
@@ -539,7 +551,9 @@ export default function WatchPage({ params }: WatchPageProps) {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => window.open(`vlc://${streamUrl}`, "_blank")}
+                onClick={() =>
+                  (window.location.href = `/api/vlc/${infoHash}?file=${fileIndexNum}&title=${encodeURIComponent(title)}`)
+                }
                 className="text-zinc-500"
               >
                 Open in VLC
@@ -560,6 +574,7 @@ export default function WatchPage({ params }: WatchPageProps) {
         src={streamUrl!}
         title={title}
         onClose={handleClose}
+        onStop={handleStop}
         autoPlay
         subtitles={subtitles}
         fallbackDuration={probedDuration ?? undefined}

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAllItems } from "@/lib/library-store";
 import { getSettings } from "@/lib/settings-store";
+import { getWatchProgress } from "@/lib/watch-store";
 import {
   extractInfoHashFromMagnet,
   deleteFromWorker,
@@ -62,9 +63,22 @@ export async function POST(req: NextRequest) {
     (i) => extractInfoHashFromMagnet(i.magnet)?.toLowerCase() === infoHash
   );
 
+  // An episode we deliberately pulled ahead must survive this sweep — it is the
+  // one sibling that is holding bytes on purpose.
+  const keepId: string | undefined = body?.keepItemId;
+
+  // Only what you've finished watching is "previous". Anything never watched or
+  // half-watched — e.g. an episode downloaded ahead — keeps its bytes.
+  const records = getWatchProgress().records;
+  const watched = (i: LibraryItem) => {
+    const hash = extractInfoHashFromMagnet(i.magnet)?.toLowerCase();
+    const mine = records.filter((r) => r.infoHash.toLowerCase() === hash);
+    return mine.length > 0 && mine.every((r) => r.finished);
+  };
+
   const usage = getUsageByItem();
   const cachedOthers = items
-    .filter((i) => i.id !== current?.id && (usage.get(i.id) ?? 0) > 0)
+    .filter((i) => i.id !== current?.id && (usage.get(i.id) ?? 0) > 0 && watched(i))
     .map((i) => toCandidate(i, usage.get(i.id) ?? 0));
 
   // Same-folder siblings go without asking; a loose item has no siblings.
@@ -79,10 +93,6 @@ export async function POST(req: NextRequest) {
   const rest = cachedOthers.filter(
     (c) => !siblingIds.has(c.id) && c.id !== keepId
   );
-
-  // An episode we deliberately pulled ahead must survive this sweep — it is the
-  // one sibling that is holding bytes on purpose.
-  const keepId: string | undefined = body?.keepItemId;
 
   const auto = getSettings().autoPurgePrevious === true;
   const confirmed = body?.confirm === true;

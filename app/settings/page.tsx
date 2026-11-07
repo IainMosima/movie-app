@@ -8,6 +8,7 @@ import { Card } from "@/components/ui/card";
 import { Loader2, RotateCcw, Save } from "lucide-react";
 import { useSettings } from "@/hooks/use-settings";
 import { DataDirPicker } from "@/components/data-dir-picker";
+import { StoragePanel } from "@/components/storage-panel";
 
 export default function SettingsPage() {
   const { settings, isLoading, updateSettings, resetSettings } = useSettings();
@@ -173,6 +174,8 @@ export default function SettingsPage() {
               </div>
             </div>
           </Card>
+
+          <StoragePanel />
 
           {/* Buffering settings */}
           <Card className="p-6 bg-zinc-900/50 border-zinc-800">

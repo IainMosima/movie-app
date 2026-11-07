@@ -2,7 +2,10 @@ import "server-only";
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
 import { getDataDir } from "@/lib/data-dir";
-import { getAllItems } from "@/lib/library-store";
+import { getAllItems, getFolderById, getItemsByFolder } from "@/lib/library-store";
+import { getTorrentEngine } from "@/lib/torrent-engine";
+import { episodeCode, showName, sortByEpisode } from "@/lib/episode-order";
+import { VIDEO_EXT } from "@/lib/watch-url";
 import { extractInfoHashFromMagnet } from "@/lib/torrent-cache-actions";
 import type { WatchRecord, WatchProgressData } from "@/types";
 
@@ -70,6 +73,86 @@ export function listUnfinished(limit = 12): WatchRecord[] {
     .slice(0, limit);
 }
 
+type UpNext = NonNullable<WatchRecord["upNext"]>;
+
+/**
+ * What follows a finished record: the next video in its pack if the torrent is
+ * loaded, else the next item in its library folder, else (pack not loaded, not
+ * in a folder) "open the pack's picker". Null when nothing comes next.
+ */
+async function findUpNext(record: WatchRecord): Promise<UpNext | null> {
+  let torrentLoaded = false;
+  try {
+    const torrent = await getTorrentEngine().getTorrent(record.infoHash);
+    if (torrent?.files.length) {
+      torrentLoaded = true;
+      const videos = sortByEpisode(
+        torrent.files.filter((f) => VIDEO_EXT.test(f.name)),
+        (f) => f.name
+      );
+      const at = videos.findIndex((f) => f.index === record.fileIndex);
+      const next = at >= 0 ? videos[at + 1] : undefined;
+      if (next) {
+        const code = episodeCode(next.name);
+        return {
+          title: code ? `${showName(record.title)} · ${code}` : next.name,
+          magnet: record.magnet,
+          fileIndex: next.index,
+        };
+      }
+    }
+  } catch {
+    // Worker unreachable: treat as not loaded.
+  }
+
+  if (!record.libraryItemId) return null;
+  const item = getAllItems().find((i) => i.id === record.libraryItemId);
+  if (item?.folderId) {
+    const folder = getFolderById(item.folderId);
+    const siblings = getItemsByFolder(item.folderId);
+    const next = siblings[siblings.findIndex((i) => i.id === item.id) + 1];
+    if (folder && next) {
+      return {
+        title: `${folder.name} · ${next.name}`,
+        magnet: next.magnet,
+        libraryItemId: next.id,
+        ...(next.fileIndex !== undefined ? { fileIndex: next.fileIndex } : {}),
+      };
+    }
+    return null;
+  }
+  if (item && !torrentLoaded) {
+    return { title: showName(record.title), magnet: item.magnet, pickFrom: item.id };
+  }
+  return null;
+}
+
+/**
+ * The home page's Continue list: unfinished titles, newest first. When the most
+ * recent record overall is finished, its up next leads the list (carried on that
+ * finished record, so forgetting the tile forgets it) — unless that episode is
+ * already in the list as half-watched.
+ */
+export async function listContinue(limit = 8): Promise<WatchRecord[]> {
+  const unfinished = listUnfinished(limit);
+  const latest = getWatchProgress().records.reduce<WatchRecord | null>(
+    (a, b) => (!a || b.updatedAt > a.updatedAt ? b : a),
+    null
+  );
+  if (!latest?.finished) return unfinished;
+
+  const upNext = await findUpNext(latest);
+  if (!upNext) return unfinished;
+  const hash = extractInfoHashFromMagnet(upNext.magnet)?.toLowerCase();
+  const alreadyThere = unfinished.some(
+    (r) =>
+      (upNext.libraryItemId && r.libraryItemId === upNext.libraryItemId) ||
+      (r.infoHash === hash && (upNext.fileIndex === undefined || r.fileIndex === upNext.fileIndex))
+  );
+  if (alreadyThere) return unfinished;
+  return [{ ...latest, upNext }, ...unfinished].slice(0, limit);
+}
+
 /**
  * The watch page only knows an infoHash, but resuming days later needs a magnet
  * to re-add the torrent. Prefer the saved library item's magnet (items persist
@@ -105,6 +188,12 @@ export function upsertRecord(input: {
 
   const data = getWatchProgress();
   const existing = data.records.find((r) => sameTitle(r, infoHash, fileIndex));
+  // Next marks the episode watched while the old player may still have a
+  // position report in flight; don't let that straggler un-mark it. A real
+  // rewatch starts well after this window.
+  if (!input.finished && existing?.finished && Date.now() - existing.updatedAt < 60_000) {
+    return existing;
+  }
   const source = existing
     ? { magnet: existing.magnet, libraryItemId: existing.libraryItemId }
     : resolveSource(infoHash);

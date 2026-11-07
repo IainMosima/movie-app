@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef, type MutableRefObject } from "react";
 import { useRouter } from "next/navigation";
-import { parseEpisode, sortByEpisode, sortFolderItems } from "@/lib/episode-order";
+import { episodeCode, sortByEpisode, sortFolderItems } from "@/lib/episode-order";
 import { watchUrl, VIDEO_EXT } from "@/lib/watch-url";
 import type { LibraryItemWithUsage } from "@/types";
 
@@ -30,10 +30,8 @@ interface TorrentFile {
 
 /** Short label for the button — "S03E05" when parseable, else a trimmed name. */
 function labelFor(name: string): string {
-  const parsed = parseEpisode(name);
-  if (parsed) {
-    return `S${String(parsed.season).padStart(2, "0")}E${String(parsed.episode).padStart(2, "0")}`;
-  }
+  const code = episodeCode(name);
+  if (code) return code;
   const stem = name.replace(/\.[^.]+$/, "");
   return stem.length > 18 ? `${stem.slice(0, 18)}…` : stem;
 }
@@ -41,14 +39,22 @@ function labelFor(name: string): string {
 export function useNextEpisode(
   infoHash: string,
   fileIndex: number,
-  returnTo: string
+  returnTo: string,
+  // The page's last reported position. goNext marks the episode watched from it
+  // and then nulls it, so the page's unmount flush can't un-finish the record.
+  lastPositionRef: MutableRefObject<{ positionSec: number; durationSec: number } | null>,
+  title: string
 ) {
   const router = useRouter();
   const [target, setTarget] = useState<NextTarget | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  // What goNext deletes once the episode is done: the pack file's cache path, or
+  // the folder item's id.
+  const currentRef = useRef<{ path?: string; itemId?: string }>({});
 
   useEffect(() => {
     let cancelled = false;
+    currentRef.current = {};
 
     const resolve = async () => {
       // 1. Season pack: is there a later file inside this same torrent?
@@ -66,6 +72,9 @@ export function useNextEpisode(
           );
 
           if (videos.length > 1) {
+            // Same lookup the page uses for its "Clear & close" path.
+            const path = (torrent?.files?.[fileIndex] as { path?: string } | undefined)?.path;
+            if (!cancelled) currentRef.current = { path };
             const ordered = sortByEpisode(videos, (f) => f.name);
             const at = ordered.findIndex((f) => f.index === fileIndex);
             if (at !== -1 && at + 1 < ordered.length) {
@@ -100,6 +109,7 @@ export function useNextEpisode(
             i.infoHash?.toLowerCase() === infoHash.toLowerCase() ||
             i.magnet.toLowerCase().includes(infoHash.toLowerCase())
         );
+        if (current && !cancelled) currentRef.current = { itemId: current.id };
         if (!current?.folderId) {
           if (!cancelled) setTarget(null);
           return;
@@ -125,6 +135,40 @@ export function useNextEpisode(
   const goNext = useCallback(async () => {
     if (!target) return;
 
+    // 1. Mark this episode watched. finished:true bypasses the store's 30s floor.
+    const last = lastPositionRef.current;
+    const durationSec = last?.durationSec || 1;
+    try {
+      await fetch("/api/progress", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          infoHash,
+          fileIndex,
+          positionSec: last?.positionSec || durationSec,
+          durationSec,
+          title,
+          finished: true,
+        }),
+      });
+    } catch {
+      // Never let progress tracking block Next.
+    }
+    // Stop the page's unmount flush re-posting this position as unfinished.
+    lastPositionRef.current = null;
+
+    // 2. Drop the just-watched episode's bytes — the CURRENT file/item, never the
+    // next one. Fire-and-forget.
+    const { path, itemId } = currentRef.current;
+    const cacheUrl =
+      target.kind === "file"
+        ? `/api/torrent/${infoHash}/file/${fileIndex}/cache${path ? `?path=${encodeURIComponent(path)}` : ""}`
+        : itemId
+          ? `/api/library/${itemId}/cache`
+          : null;
+    if (cacheUrl) fetch(cacheUrl, { method: "DELETE" }).catch(() => {});
+
+    // 3. Go.
     if (target.kind === "file") {
       router.replace(
         watchUrl(infoHash, labelFor(target.name), target.fileIndex, returnTo)
@@ -154,7 +198,7 @@ export function useNextEpisode(
     } catch {
       setIsLoading(false);
     }
-  }, [target, infoHash, returnTo, router]);
+  }, [target, infoHash, fileIndex, returnTo, router, lastPositionRef, title]);
 
   return {
     nextLabel: target

@@ -174,6 +174,7 @@ export function reconcile(): StorageEntry[] {
       sizeFormatted: formatBytes(sizeBytes),
       kind,
       libraryItemId,
+      itemName: libraryItemId ? items.find((i) => i.id === libraryItemId)?.name : undefined,
     };
   });
 }

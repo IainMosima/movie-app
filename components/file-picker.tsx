@@ -14,6 +14,9 @@ import {
   ChevronUp,
   ChevronDown,
   Eraser,
+  Download,
+  CircleCheck,
+  MonitorPlay,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,7 +27,8 @@ import {
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { sortByEpisode } from "@/lib/episode-order";
+import { sortByEpisode, episodeCode } from "@/lib/episode-order";
+import { useDownloadProgress } from "@/hooks/use-download-progress";
 import { ScrollPager } from "@/components/scroll-pager";
 
 interface TorrentFile {
@@ -53,6 +57,7 @@ interface FilePickerProps {
   magnet: string;
   title: string;
   onSelectFile: (infoHash: string, fileIndex: number, fileName: string) => void;
+  onVLC?: (infoHash: string, fileIndex: number, fileName: string) => void;
 }
 
 export function FilePicker({
@@ -61,6 +66,7 @@ export function FilePicker({
   magnet,
   title,
   onSelectFile,
+  onVLC,
 }: FilePickerProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -212,6 +218,7 @@ export function FilePicker({
     try {
       await clearFile(file);
       await refreshSizes();
+      await downloads.refresh();
     } finally {
       setClearingIndex(null);
     }
@@ -257,6 +264,11 @@ export function FilePicker({
     (f) => f.name
   );
   const otherFiles = files.filter((f) => !f.isVideo);
+
+  const downloads = useDownloadProgress(
+    open && !!infoHash,
+    videoFiles.map((f) => ({ id: String(f.index), infoHash, fileIndex: f.index }))
+  );
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -376,23 +388,37 @@ export function FilePicker({
                         const Icon = getFileIcon(file);
                         const isMain = file.index === mainVideoIndex;
                         const isClearing = clearingIndex === file.index;
+                        const code = episodeCode(file.name);
+                        const dl = downloads.status({
+                          id: String(file.index),
+                          infoHash,
+                          fileIndex: file.index,
+                        });
 
                         return (
                           <div
                             key={file.index}
-                            className="group flex items-center gap-2 rounded-xl border-2 border-transparent hover:border-purple-600 hover:scale-[1.01] transition-all"
+                            className="group flex flex-col sm:flex-row sm:items-center sm:gap-2 rounded-xl border-2 border-transparent hover:border-purple-600 sm:hover:scale-[1.01] transition-all"
                           >
                             <button
                               onClick={() => handlePlay(file.index)}
-                              className="flex flex-1 items-center gap-3 sm:gap-4 p-3 sm:p-4 text-left hover:bg-purple-600/20 focus:bg-purple-600/20 focus:outline-none rounded-xl min-w-0"
+                              className="flex flex-1 items-center gap-3 sm:gap-4 p-3 pb-1 sm:p-4 text-left hover:bg-purple-600/20 focus:bg-purple-600/20 focus:outline-none rounded-xl min-w-0 w-full"
                             >
                               <div className="h-11 w-11 sm:h-12 sm:w-12 rounded-xl flex items-center justify-center shrink-0 bg-zinc-800 group-hover:bg-purple-600 transition-colors">
                                 <Icon className="h-5 w-5 sm:h-6 sm:w-6" />
                               </div>
                               <div className="flex-1 min-w-0">
                                 <p className="text-sm sm:text-base text-zinc-200 truncate font-medium">
-                                  {file.name}
+                                  {code ?? file.name}
                                 </p>
+                                {code && (
+                                  <p className="text-[11px] text-zinc-600 truncate">
+                                    {file.name}
+                                  </p>
+                                )}
+                                {dl.error && (
+                                  <p className="text-xs text-red-400 mt-1">{dl.error}</p>
+                                )}
                                 <div className="flex items-center gap-2 mt-1 flex-wrap">
                                   <span className="text-sm text-zinc-500">
                                     {file.sizeFormatted}
@@ -418,6 +444,54 @@ export function FilePicker({
                               </div>
                               <Play className="hidden sm:block h-6 w-6 text-zinc-600 group-hover:text-purple-400 shrink-0 transition-colors" />
                             </button>
+                            {/* Phone: actions on their own line so the name keeps the full width */}
+                            <div className="flex items-center justify-end gap-1 px-2 pb-1 sm:p-0 sm:contents">
+                            {dl.progress !== undefined && dl.progress >= 1 ? (
+                              <span className="shrink-0 flex items-center gap-1 text-xs text-emerald-300 px-1">
+                                <CircleCheck className="h-3.5 w-3.5" />
+                                Ready
+                              </span>
+                            ) : dl.progress !== undefined && dl.progress > 0 ? (
+                              <span className="shrink-0 text-xs text-purple-300 tabular-nums px-1">
+                                ↓ {Math.floor(dl.progress * 100)}%
+                              </span>
+                            ) : null}
+                            {!(dl.progress !== undefined && dl.progress >= 1) && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  downloads.start(String(file.index), async () => ({
+                                    infoHash,
+                                    fileIndex: file.index,
+                                    fileSize: file.size,
+                                  }));
+                                }}
+                                disabled={dl.busy}
+                                className="shrink-0 h-11 w-11 flex items-center justify-center rounded-lg text-zinc-500 hover:text-purple-300 hover:bg-purple-500/10 disabled:opacity-30 transition-colors"
+                                title="Download in the background so it's ready to watch"
+                                aria-label={`Download ${code ?? file.name}`}
+                              >
+                                {dl.busy ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Download className="h-4 w-4" />
+                                )}
+                              </button>
+                            )}
+                            {onVLC && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onVLC(infoHash, file.index, file.name);
+                                }}
+                                disabled={!infoHash}
+                                className="shrink-0 h-11 w-11 flex items-center justify-center rounded-lg text-zinc-500 hover:text-purple-300 hover:bg-purple-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-400 disabled:opacity-30 transition-colors"
+                                title="Get VLC link"
+                                aria-label="Get VLC link"
+                              >
+                                <MonitorPlay className="h-4 w-4" />
+                              </button>
+                            )}
                             <button
                               onClick={(e) => handleClear(e, file)}
                               disabled={isClearing || isClearingAll || file.cachedBytes === 0}
@@ -434,6 +508,7 @@ export function FilePicker({
                                 <Eraser className="h-4 w-4" />
                               )}
                             </button>
+                            </div>
                           </div>
                         );
                       })}

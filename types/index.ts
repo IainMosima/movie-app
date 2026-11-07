@@ -151,6 +151,7 @@ export interface StorageEntry {
   sizeFormatted: string;
   kind: StorageEntryKind;
   libraryItemId?: string;
+  itemName?: string; // matched library item's name, for display
 }
 
 export interface DiskSpace {
@@ -180,6 +181,16 @@ export interface WatchRecord {
   durationSec: number;
   finished: boolean;
   updatedAt: number;
+  // Only on the Continue list: what comes after this finished episode. `pickFrom`
+  // (a library item id) means "open that pack's picker" — the torrent isn't
+  // loaded, so the next file can't be named yet.
+  upNext?: {
+    title: string;
+    magnet: string;
+    fileIndex?: number;
+    libraryItemId?: string;
+    pickFrom?: string;
+  };
 }
 
 export interface WatchProgressData {
