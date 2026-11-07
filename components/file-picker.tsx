@@ -30,6 +30,8 @@ import { cn } from "@/lib/utils";
 import { sortByEpisode, episodeCode } from "@/lib/episode-order";
 import { useDownloadProgress } from "@/hooks/use-download-progress";
 import { ScrollPager } from "@/components/scroll-pager";
+import { useLgCheck } from "@/hooks/use-lg-check";
+import { lgCompat, LG_TIP } from "@/lib/tv-compat";
 
 interface TorrentFile {
   index: number;
@@ -77,6 +79,7 @@ export function FilePicker({
   const [clearingIndex, setClearingIndex] = useState<number | null>(null);
   const [cachedTotal, setCachedTotal] = useState({ bytes: 0, formatted: "0 B" });
   const [isClearingAll, setIsClearingAll] = useState(false);
+  const [lgCheck] = useLgCheck();
 
   // Status polling
   const [status, setStatus] = useState<TorrentStatus | null>(null);
@@ -429,6 +432,28 @@ export function FilePicker({
                                   >
                                     {file.extension}
                                   </Badge>
+                                  {lgCheck &&
+                                    (() => {
+                                      const lg = lgCompat(file.name);
+                                      return (
+                                        <Badge
+                                          variant="outline"
+                                          className={cn(
+                                            "text-xs",
+                                            lg.ok
+                                              ? "border-emerald-800 text-emerald-300"
+                                              : "border-amber-800 text-amber-300"
+                                          )}
+                                          title={
+                                            lg.ok
+                                              ? "Should play on the LG TV"
+                                              : `Won't play on the LG TV: ${lg.problems.join(", ")}. ${LG_TIP}`
+                                          }
+                                        >
+                                          {lg.ok ? "LG ✓" : "LG ✗"}
+                                        </Badge>
+                                      );
+                                    })()}
                                   {file.cachedBytes > 0 && (
                                     <span className="text-xs text-amber-500/90">
                                       {file.cachedFormatted} on disk

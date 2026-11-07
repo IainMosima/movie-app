@@ -26,6 +26,8 @@ import {
   SearchX,
 } from "lucide-react";
 import { isValidTorrentInput, extractTitleFromInput } from "@/lib/torrent-utils";
+import { lgCompat, LG_TIP } from "@/lib/tv-compat";
+import { useLgCheck } from "@/hooks/use-lg-check";
 import { detectCategory } from "@/lib/category";
 import { watchUrl } from "@/lib/watch-url";
 import { episodeCode } from "@/lib/episode-order";
@@ -126,6 +128,12 @@ function LibraryView() {
   const [newItemFolderId, setNewItemFolderId] = useState<string>("");
   const [newItemCategory, setNewItemCategory] = useState<LibraryCategory | null>(null);
   const [isAdding, setIsAdding] = useState(false);
+  const [lgCheck, setLgCheck] = useLgCheck();
+  // Judge the release name from the magnet's dn= when it has one, else the typed name.
+  const lgName = /[?&]dn=/.test(newMagnet)
+    ? extractTitleFromInput(newMagnet)
+    : newName.trim();
+  const lgVerdict = lgCheck && lgName ? lgCompat(lgName) : null;
 
   // Folder state
   const [newFolderOpen, setNewFolderOpen] = useState(false);
@@ -747,6 +755,27 @@ function LibraryView() {
                         placeholder="Input URL..."
                         className="bg-zinc-800 border-zinc-700 font-mono text-xs h-11"
                       />
+                      {lgVerdict && (
+                        <p
+                          className={cn(
+                            "mt-2 text-sm",
+                            lgVerdict.ok ? "text-emerald-400" : "text-amber-400"
+                          )}
+                        >
+                          {lgVerdict.ok
+                            ? "Should play on the LG TV"
+                            : `Won't play on the LG TV: ${lgVerdict.problems.join(", ")}. ${LG_TIP}`}
+                        </p>
+                      )}
+                      <label className="mt-3 flex items-center gap-3 min-h-11 text-sm text-zinc-300 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={lgCheck}
+                          onChange={(e) => setLgCheck(e.target.checked)}
+                          className="h-5 w-5 accent-purple-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-400"
+                        />
+                        Check it plays on my LG TV
+                      </label>
                     </div>
                     <div>
                       <label className="text-sm text-zinc-400 mb-2 block">

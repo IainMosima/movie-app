@@ -20,13 +20,16 @@ export const metadata: Metadata = {
 };
 
 // Runs before paint, plain ES5 so even old TV engines execute it.
+// 0. Browsers too old for the React app (no Promise/fetch, or Chrome < 60 —
+//    e.g. LG webOS 3) go to the plain /lite page; "?full=1" opts out.
 // 1. Tags <html class="tv"> on TV browsers. Newer VIDAA (Chromium "Odin" with a
 //    cursor) reports hover/fine-pointer like a laptop, so media queries alone
 //    can't tell it's a TV.
 // 2. Once per session, reports what this browser supports to /api/tv-check so
 //    a TV visit shows up in data/tv-check.log without opening a special page.
 const tvBootScript = `(function(){
-var d=document.documentElement,ua=navigator.userAgent;
+var d=document.documentElement,ua=navigator.userAgent,cm=ua.match(/Chrome\\/(\\d+)/);
+if((!window.Promise||!window.fetch||(cm&&+cm[1]<60))&&location.pathname!=="/lite"&&location.search.indexOf("full=1")<0){location.replace("/lite");return}
 if(/tv|vidaa|hisense|odin|tizen|webos|netcast|viera|roku/i.test(ua))d.className+=" tv";
 try{if(sessionStorage.getItem("tvbeacon"))return;sessionStorage.setItem("tvbeacon","1")}catch(e){}
 window.addEventListener("load",function(){
