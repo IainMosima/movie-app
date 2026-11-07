@@ -6,6 +6,7 @@ import { getAllItems, getFolderById, getItemsByFolder } from "@/lib/library-stor
 import { getTorrentEngine } from "@/lib/torrent-engine";
 import { episodeCode, showName, sortByEpisode } from "@/lib/episode-order";
 import { VIDEO_EXT } from "@/lib/watch-url";
+import { loadMeta } from "@/lib/torrent-meta";
 import { extractInfoHashFromMagnet } from "@/lib/torrent-cache-actions";
 import type { WatchRecord, WatchProgressData } from "@/types";
 
@@ -75,35 +76,51 @@ export function listUnfinished(limit = 12): WatchRecord[] {
 
 type UpNext = NonNullable<WatchRecord["upNext"]>;
 
+/** The video after `fileIndex` in episode order, if any. */
+export function nextEpisode<T extends { index: number; name: string }>(
+  files: T[],
+  fileIndex: number
+): T | undefined {
+  const videos = sortByEpisode(
+    files.filter((f) => VIDEO_EXT.test(f.name)),
+    (f) => f.name
+  );
+  const at = videos.findIndex((f) => f.index === fileIndex);
+  return at >= 0 ? videos[at + 1] : undefined;
+}
+
 /**
- * What follows a finished record: the next video in its pack if the torrent is
- * loaded, else the next item in its library folder, else (pack not loaded, not
- * in a folder) "open the pack's picker". Null when nothing comes next.
+ * What follows a finished record: the next video in its pack (from the loaded
+ * torrent, else the file list remembered in data/meta), else the next item in
+ * its library folder, else (pack unknown, not in a folder) "open the pack's
+ * picker". Null when nothing comes next.
  */
 async function findUpNext(record: WatchRecord): Promise<UpNext | null> {
-  let torrentLoaded = false;
+  let files: { index: number; name: string }[] | undefined;
   try {
-    const torrent = await getTorrentEngine().getTorrent(record.infoHash);
-    if (torrent?.files.length) {
-      torrentLoaded = true;
-      const videos = sortByEpisode(
-        torrent.files.filter((f) => VIDEO_EXT.test(f.name)),
-        (f) => f.name
-      );
-      const at = videos.findIndex((f) => f.index === record.fileIndex);
-      const next = at >= 0 ? videos[at + 1] : undefined;
-      if (next) {
-        const code = episodeCode(next.name);
-        return {
-          title: code ? `${showName(record.title)} · ${code}` : next.name,
-          magnet: record.magnet,
-          fileIndex: next.index,
-        };
-      }
-    }
+    // Never let a stuck torrent engine hold up the home page.
+    const torrent = await Promise.race([
+      getTorrentEngine().getTorrent(record.infoHash),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000)),
+    ]);
+    if (torrent?.files.length) files = torrent.files;
   } catch {
-    // Worker unreachable: treat as not loaded.
+    // Worker unreachable: fall back to the remembered file list.
   }
+  files ??= loadMeta(record.infoHash)?.files;
+
+  if (files?.length) {
+    const next = nextEpisode(files, record.fileIndex);
+    if (next) {
+      const code = episodeCode(next.name);
+      return {
+        title: code ? `${showName(record.title)} · ${code}` : next.name,
+        magnet: record.magnet,
+        fileIndex: next.index,
+      };
+    }
+  }
+  const packKnown = !!files?.length;
 
   if (!record.libraryItemId) return null;
   const item = getAllItems().find((i) => i.id === record.libraryItemId);
@@ -121,7 +138,7 @@ async function findUpNext(record: WatchRecord): Promise<UpNext | null> {
     }
     return null;
   }
-  if (item && !torrentLoaded) {
+  if (item && !packKnown) {
     return { title: showName(record.title), magnet: item.magnet, pickFrom: item.id };
   }
   return null;

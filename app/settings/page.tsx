@@ -8,6 +8,7 @@ import { Card } from "@/components/ui/card";
 import { Loader2, RotateCcw, Save } from "lucide-react";
 import { useSettings } from "@/hooks/use-settings";
 import { DataDirPicker } from "@/components/data-dir-picker";
+import { RuntimeCard } from "@/components/runtime-card";
 import { StoragePanel } from "@/components/storage-panel";
 
 export default function SettingsPage() {
@@ -94,6 +95,7 @@ export default function SettingsPage() {
         {/* Settings form */}
         <div className="space-y-6">
           {/* Data directory */}
+          <RuntimeCard />
           <DataDirPicker />
 
           {/* Connection settings */}
@@ -175,7 +177,9 @@ export default function SettingsPage() {
             </div>
           </Card>
 
-          <StoragePanel />
+          <div id="storage" className="scroll-mt-20">
+            <StoragePanel />
+          </div>
 
           {/* Buffering settings */}
           <Card className="p-6 bg-zinc-900/50 border-zinc-800">

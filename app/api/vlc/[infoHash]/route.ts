@@ -3,7 +3,10 @@ import { getTorrentEngine } from "@/lib/torrent-engine";
 import { pickVideo, subsFor } from "@/lib/subtitle-match";
 import { episodeCode } from "@/lib/episode-order";
 import { lanHost } from "@/lib/lan-host";
+import { getAllItems } from "@/lib/library-store";
+import { extractInfoHashFromMagnet } from "@/lib/torrent-cache-actions";
 
+const ADD_TIMEOUT_MS = 25_000;
 const ENGLISH = /\b(en|eng|english)\b/i;
 
 /**
@@ -20,11 +23,29 @@ export async function GET(
   const rawTitle = sp.get("title") || "Video";
 
   const engine = getTorrentEngine();
-  const [torrent, workerPort] = await Promise.all([
+  const [found, workerPort] = await Promise.all([
     engine.getTorrent(infoHash),
     engine.getWorkerPort(),
   ]);
-  if (!torrent) return NextResponse.json({ error: "Torrent not found" }, { status: 404 });
+  let torrent = found;
+  // A copied link can be opened in VLC long after (or before) the torrent was
+  // loaded in the app — load it now so the link always works.
+  if (!torrent) {
+    const hash = infoHash.toLowerCase();
+    const item = getAllItems().find(
+      (i) => (i.infoHash ?? extractInfoHashFromMagnet(i.magnet))?.toLowerCase() === hash
+    );
+    try {
+      torrent = await Promise.race([
+        engine.addTorrent(item?.magnet ?? `magnet:?xt=urn:btih:${hash}`),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("timeout")), ADD_TIMEOUT_MS)
+        ),
+      ]);
+    } catch {
+      return NextResponse.json({ error: "Still loading, try again" }, { status: 503 });
+    }
+  }
 
   const video = pickVideo(torrent.files, sp.get("file"));
   if (!video) return NextResponse.json({ error: "No video file" }, { status: 404 });

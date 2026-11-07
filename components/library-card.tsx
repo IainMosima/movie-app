@@ -163,7 +163,7 @@ export function LibraryCard({
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => onVLC()}>
               <MonitorPlay className="h-4 w-4" />
-              Get VLC stream URL
+              Copy VLC link
             </DropdownMenuItem>
 
             {status.state === "watched" ? (

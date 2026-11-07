@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDataDir, getMediaRoot, setDataDir } from "@/lib/data-dir";
+import { getDataDir, getHostDataDir, getMediaRoot, setDataDir, toHostPath } from "@/lib/data-dir";
 import { getDiskSpace } from "@/lib/storage-store";
 import { getTorrentEngine } from "@/lib/torrent-engine";
 import type { DataDirReport } from "@/types";
@@ -10,7 +10,9 @@ export async function GET() {
     const disk = getDiskSpace();
     const report: DataDirReport = {
       activeDir: getDataDir(),
-      mediaRoot: getMediaRoot(),
+      hostDir: getHostDataDir(),
+      docker: process.env.SPACEFLIX_DOCKER === "1",
+      mediaRoot: toHostPath(getMediaRoot()),
       freeBytes: disk.freeBytes,
       totalBytes: disk.totalBytes,
     };
@@ -36,7 +38,7 @@ export async function POST(request: NextRequest) {
     const activeDir = setDataDir(path);
     await getTorrentEngine().restartWorker();
 
-    return NextResponse.json({ success: true, activeDir });
+    return NextResponse.json({ success: true, activeDir: toHostPath(activeDir) });
   } catch (error) {
     console.error("Failed to switch data dir:", error);
     return NextResponse.json(

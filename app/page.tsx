@@ -1,9 +1,11 @@
 "use client";
 
-import { useState, useMemo, useRef, Suspense } from "react";
+import { useState, useMemo, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { ContinueWatching } from "@/components/continue-watching";
+import { StorageStrip } from "@/components/storage-strip";
+import { UfoLogo } from "@/components/ufo-logo";
 import { FilePicker } from "@/components/file-picker";
 import { FolderCard } from "@/components/folder-card";
 import { FolderDialog } from "@/components/folder-dialog";
@@ -28,10 +30,12 @@ import {
 import { isValidTorrentInput, extractTitleFromInput } from "@/lib/torrent-utils";
 import { lgCompat, LG_TIP } from "@/lib/tv-compat";
 import { useLgCheck } from "@/hooks/use-lg-check";
-import { detectCategory } from "@/lib/category";
+import { detectCategory, resolveItemCategory } from "@/lib/category";
 import { watchUrl } from "@/lib/watch-url";
 import { episodeCode } from "@/lib/episode-order";
 import { cn } from "@/lib/utils";
+import { extractInfoHashFromMagnet } from "@/lib/torrent-cache-actions";
+import { useVlcCopy } from "@/hooks/use-vlc-copy";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -147,20 +151,7 @@ function LibraryView() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("any");
 
   const [isLoadingPlay, setIsLoadingPlay] = useState(false);
-  // Links for the VLC dialog, built server-side so they carry the Mac's LAN
-  // address (a link made on localhost would be useless on a phone).
-  const [vlcLinks, setVlcLinks] = useState<{
-    streamUrl: string;
-    playlistUrl: string;
-    subUrl: string | null;
-    title: string;
-  } | null>(null);
-  const vlcUrl = vlcLinks?.playlistUrl ?? null;
-  const [vlcCopied, setVlcCopied] = useState(false);
-  // Loose .srt/.vtt files in the torrent — VLC can't fetch them from the stream URL.
-  const [vlcSubs, setVlcSubs] = useState<{ index: number; name: string; url: string }[]>([]);
-  // When VLC mode is active, file picker uses this callback instead of navigating
-  const [vlcPickerCallback, setVlcPickerCallback] = useState<((fileIndex: number) => void) | null>(null);
+  const copyVlc = useVlcCopy();
 
   const openFolder = folders.find((f) => f.id === folderParam) ?? null;
 
@@ -357,96 +348,25 @@ function LibraryView() {
     }
   };
 
-  // Fetch the VLC links for one file and open the "Watch in VLC" dialog.
-  const openVlcDialog = async (infoHash: string, fileIndex: number, title: string) => {
-    setIsLoadingPlay(true);
-    try {
-      const res = await fetch(
-        `/api/vlc/${infoHash}?format=json&file=${fileIndex}&title=${encodeURIComponent(title)}`
-      );
-      if (!res.ok) throw new Error("Torrent engine still starting — try again");
-      setVlcLinks({ title, ...(await res.json()) });
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to load");
-    } finally {
-      setIsLoadingPlay(false);
+  // Tapping a Continue card (not its play button) opens the show itself: its
+  // folder, or the pack's episode list. A lone movie has nothing to open, so it
+  // just plays.
+  const handleOpenShow = (record: WatchRecord) => {
+    const id = record.upNext?.libraryItemId ?? record.upNext?.pickFrom ?? record.libraryItemId;
+    const item = items.find((i) => i.id === id) ?? items.find((i) => i.id === record.libraryItemId);
+    if (item?.folderId) return openFolderCard(item.folderId);
+    if (item && resolveItemCategory(item) === "series") {
+      return router.push(homeUrl({ listing: item.id }), { scroll: false });
     }
+    return record.upNext ? handlePlayNext(record.upNext) : handleResume(record);
   };
 
-  const handleVLC = async (magnet: string, title?: string) => {
-    if (!title) title = extractTitleFromInput(magnet);
-    setIsLoadingPlay(true);
-    try {
-      const filesRes = await fetch("/api/torrent/files", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ magnet }),
-      });
-      if (!filesRes.ok) throw new Error("Failed to load torrent");
-      const data = await filesRes.json();
-      const showLinks = (fileIndex: number) =>
-        openVlcDialog(data.infoHash, fileIndex, title ?? "");
-      const videoFiles = data.files.filter((f: { isVideo: boolean }) => f.isVideo);
-      setVlcSubs(
-        data.files
-          .filter((f: { name: string }) => /\.(srt|vtt)$/i.test(f.name))
-          .map((f: { index: number; name: string }) => ({
-            index: f.index,
-            name: f.name,
-            url: `/api/subtitle/${data.infoHash}?sub=${f.index}`,
-          }))
-      );
-
-      if (videoFiles.length <= 1) {
-        await showLinks(data.mainVideoIndex ?? 0);
-      } else {
-        // Multi-file: open picker, then show URL for chosen file
-        setVlcPickerCallback(() => (fileIndex: number) => {
-          setVlcPickerCallback(null);
-          showLinks(fileIndex);
-        });
-        setTransientPicker({ magnet, title: title ?? "" });
-      }
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to load");
-    } finally {
-      setIsLoadingPlay(false);
-    }
-  };
-
-  // navigator.clipboard only exists on https/localhost — on a phone opening the
-  // app at http://192.168.x.x it's undefined, so fall back to execCommand.
-  // navigator.clipboard only exists on https/localhost, so on a phone at
-  // http://192.168.x.x we copy from the visible link field instead. iOS only
-  // copies from a real, on-screen, editable field — hence un-readOnly for the
-  // moment of the copy. The text stays selected so long-press → Copy works too.
-  const vlcLinkRef = useRef<HTMLInputElement>(null);
-  const copyVlcUrl = () => {
-    if (!vlcUrl) return;
-    const done = () => {
-      setVlcCopied(true);
-      setTimeout(() => setVlcCopied(false), 2000);
-    };
-    const fromField = () => {
-      const el = vlcLinkRef.current;
-      let ok = false;
-      if (el) {
-        el.readOnly = false;
-        el.focus();
-        el.setSelectionRange(0, el.value.length);
-        try {
-          ok = document.execCommand("copy");
-        } catch {
-          ok = false;
-        }
-        el.readOnly = true;
-        el.setSelectionRange(0, el.value.length);
-      }
-      if (ok) done();
-      else toast("Link selected — long-press it and tap Copy");
-    };
-    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(vlcUrl).then(done, fromField);
-    else fromField();
+  // One tap → link on the clipboard. Synchronous on purpose: phones only allow
+  // a clipboard write inside the tap itself, so nothing may be awaited first.
+  const handleVLC = (item: LibraryItemWithUsage) => {
+    const hash = item.infoHash ?? extractInfoHashFromMagnet(item.magnet);
+    if (!hash) return toast.error("Not a magnet link — open it and copy per episode");
+    copyVlc(hash, item.fileIndex, item.name);
   };
 
   const handleSelectFile = (
@@ -454,13 +374,6 @@ function LibraryView() {
     fileIndex: number,
     fileName: string
   ) => {
-    // VLC mode: show URL popup instead of navigating
-    if (vlcPickerCallback) {
-      closePicker();
-      vlcPickerCallback(fileIndex);
-      return;
-    }
-
     // Persist chosen episode index to the library item
     const libItem = items.find((i: LibraryItemWithUsage) => i.magnet === pickerMagnet);
     if (libItem) {
@@ -559,83 +472,12 @@ function LibraryView() {
         </div>
       )}
 
-      {/* VLC stream URL popup — a Dialog so it stacks above the folder dialog */}
-      <Dialog
-        open={!!vlcUrl}
-        onOpenChange={(o) => {
-          if (!o) {
-            setVlcLinks(null);
-            setVlcCopied(false);
-          }
-        }}
-      >
-        <DialogContent className="bg-zinc-900 border-zinc-700 max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="text-base">Watch in VLC</DialogTitle>
-          </DialogHeader>
-          <p className="text-xs text-zinc-500">
-            Copy this link, then in VLC open Network Stream and paste it. Works on
-            any phone or computer on this Wi-Fi.
-          </p>
-          <input
-            ref={vlcLinkRef}
-            readOnly
-            value={vlcUrl ?? ""}
-            onFocus={(e) => e.currentTarget.select()}
-            aria-label="VLC link"
-            // 16px on phones: smaller text makes iOS zoom the page on focus.
-            className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-3 font-mono text-base sm:text-xs text-zinc-300 focus:outline-none focus:border-purple-500"
-          />
-          <p className="text-xs text-zinc-500">
-            Subtitles turn on by themselves (English). To switch: VLC → Subtitle → Sub Track.
-          </p>
-          {vlcSubs.length > 0 && (
-            <div>
-              <p className="text-xs text-zinc-500 mb-2">
-                Other subtitle files (optional, to load by hand):
-              </p>
-              <div className="max-h-32 overflow-y-auto space-y-1">
-                {vlcSubs.map((sub) => (
-                  <a
-                    key={sub.index}
-                    href={sub.url}
-                    download={sub.name.replace(/\.srt$/i, ".vtt")}
-                    className="block text-xs text-purple-400 hover:text-purple-300 truncate"
-                  >
-                    {sub.name}
-                  </a>
-                ))}
-              </div>
-            </div>
-          )}
-          {vlcLinks && (
-            <p className="text-[11px] text-zinc-600 break-all select-all">
-              Plain video link: {vlcLinks.streamUrl}
-            </p>
-          )}
-          <div className="flex flex-col sm:flex-row gap-2">
-            <Button className="flex-1 h-11" onClick={copyVlcUrl}>
-              {vlcCopied ? "Copied!" : "Copy link"}
-            </Button>
-            <Button
-              variant="outline"
-              className="border-zinc-700 h-11"
-              onClick={() => {
-                setVlcLinks(null);
-                setVlcCopied(false);
-              }}
-            >
-              Close
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
       <div className="max-w-3xl mx-auto px-5 sm:px-8 py-6 sm:py-8">
         {/* Header */}
         <div className="text-center mb-6 sm:mb-8">
-          <h1 className="text-3xl sm:text-4xl font-bold bg-gradient-to-r from-white to-zinc-400 bg-clip-text text-transparent">
-            <span className="mr-2">🛸</span>Spaceflix
+          <h1 className="inline-flex items-center gap-3 text-3xl sm:text-4xl font-bold text-zinc-100">
+            <UfoLogo className="h-10 w-10 sm:h-12 sm:w-12 text-zinc-100" />
+            Spaceflix
           </h1>
         </div>
 
@@ -658,10 +500,16 @@ function LibraryView() {
               records={watchRecords}
               onResume={handleResume}
               onPlayNext={handlePlayNext}
+              onOpenShow={handleOpenShow}
               onForget={forgetWatchRecord}
             />
           </div>
         )}
+
+        {/* Storage at a glance — full list and toggles in Settings */}
+        <div className="mb-6 sm:mb-8">
+          <StorageStrip />
+        </div>
 
         {/* Library */}
         <div>
@@ -880,7 +728,7 @@ function LibraryView() {
                   onOpen={() => handleOpenListing(item)}
                   onDelete={() => handleDelete(item.id, item.name)}
                   onClearCache={() => handleClearCache(item.id, item.name)}
-                  onVLC={() => handleVLC(item.magnet, item.name)}
+                  onVLC={() => handleVLC(item)}
                   onMoveToFolder={(folderId) => moveItem(item.id, folderId)}
                   onSetCategory={(category) => setItemCategory(item.id, category)}
                   status={statusOf(item)}
@@ -958,11 +806,7 @@ function LibraryView() {
           magnet={pickerMagnet}
           title={pickerTitle}
           onSelectFile={handleSelectFile}
-          onVLC={(h, i, name) => {
-            // Loose subtitle files are only known on the handleVLC path.
-            if (!vlcPickerCallback) setVlcSubs([]);
-            openVlcDialog(h, i, pickerTitle || name);
-          }}
+          onVLC={(h, i, name) => copyVlc(h, i, pickerTitle || name)}
         />
       )}
 
@@ -977,7 +821,7 @@ function LibraryView() {
             handlePlayMagnet(item.magnet, item.name, { itemId: item.id })
           }
           onOpenListing={(item) => handleOpenListing(item)}
-          onVLC={(item) => handleVLC(item.magnet, item.name)}
+          onVLC={handleVLC}
           onAddItem={(input) => addItem({ ...input, folderId: openFolder.id })}
           onClearItemCache={(id) => clearItemCache(id)}
           onDeleteItem={(id) => deleteItem(id)}

@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSettings } from "@/lib/settings-store";
 import { getDiskSpace, formatBytes } from "@/lib/storage-store";
+import { getAllItems } from "@/lib/library-store";
+import { extractInfoHashFromMagnet } from "@/lib/torrent-cache-actions";
+import { addDownload, prefetchAccepted, workerPrefetch } from "@/lib/downloads-store";
 
 /** Never let a pull-ahead take the disk below this. Matches the storage floor. */
 const FREE_SPACE_FLOOR_BYTES = 8 * 1024 * 1024 * 1024;
@@ -49,25 +52,23 @@ export async function POST(
     });
   }
 
-  try {
-    const portRes = await fetch("http://localhost:8181/api/worker-port", {
-      signal: AbortSignal.timeout(4000),
-    });
-    if (!portRes.ok) {
-      return NextResponse.json({ prefetching: false, reason: "no-worker" });
-    }
-    const { port } = await portRes.json();
+  const result = await workerPrefetch(infoHash, fileIndex, pin);
+  if (pin && prefetchAccepted(result)) rememberPin(infoHash, fileIndex, fileSize, result.file);
+  // A prefetch is an optimisation — failures come back as a reason, never thrown.
+  return NextResponse.json(result);
+}
 
-    const res = await fetch(
-      `http://localhost:${port}/prefetch/${infoHash}?file=${fileIndex}${pin ? "&pin=1" : ""}`,
-      { method: "POST", signal: AbortSignal.timeout(8000) }
-    );
-    if (!res.ok) {
-      return NextResponse.json({ prefetching: false, reason: "worker-error" });
-    }
-    return NextResponse.json(await res.json());
-  } catch {
-    // A prefetch is an optimisation — never surface a failure to the player.
-    return NextResponse.json({ prefetching: false, reason: "unreachable" });
-  }
+/** Keep a Download-button pin across restarts, same as POST /api/downloads. */
+function rememberPin(infoHash: string, fileIndex: number, size: number, fileName?: string) {
+  const hash = infoHash.toLowerCase();
+  const item = getAllItems().find(
+    (i) => (i.infoHash ?? extractInfoHashFromMagnet(i.magnet))?.toLowerCase() === hash
+  );
+  addDownload({
+    infoHash: hash,
+    fileIndex,
+    magnet: item?.magnet ?? `magnet:?xt=urn:btih:${hash}`,
+    title: item?.name ?? fileName ?? `File ${fileIndex}`,
+    size,
+  });
 }

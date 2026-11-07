@@ -4,6 +4,10 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Home, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { UfoLogo } from "@/components/ufo-logo";
+import { PowerMenu } from "@/components/power-menu";
+import { LanAddress } from "@/components/lan-address";
+import { RuntimeBadge } from "@/components/runtime-badge";
 
 const NAV_ITEMS = [
   { href: "/", label: "Home", icon: Home },
@@ -24,10 +28,8 @@ export function Nav() {
         <div className="flex items-center h-14">
           {/* Logo */}
           <Link href="/" className="flex items-center gap-2 mr-8">
-            <div className="h-8 w-8 bg-purple-600 rounded-lg flex items-center justify-center text-lg">
-              🛸
-            </div>
-            <span className="font-bold text-lg hidden sm:block">Spaceflix</span>
+            <UfoLogo className="h-8 w-8 text-zinc-100" accent="#c4b5fd" />
+            <span className="hidden sm:block text-lg font-semibold tracking-tight text-zinc-100">Spaceflix</span>
           </Link>
 
           {/* Nav items */}
@@ -50,6 +52,12 @@ export function Nav() {
                 </Link>
               );
             })}
+          </div>
+
+          <div className="ml-auto flex items-center gap-1">
+            <LanAddress />
+            <RuntimeBadge />
+            <PowerMenu />
           </div>
         </div>
       </div>

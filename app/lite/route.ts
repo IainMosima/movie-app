@@ -10,6 +10,7 @@ import {
 import { episodeCode, showName, sortByEpisode } from "@/lib/episode-order";
 import { getWatchProgress, listContinue } from "@/lib/watch-store";
 import { getTorrentEngine } from "@/lib/torrent-engine";
+import { saveMeta } from "@/lib/torrent-meta";
 import { extractInfoHashFromMagnet } from "@/lib/torrent-cache-actions";
 import { subsFor } from "@/lib/subtitle-match";
 import { isFFmpegAvailable, probeEmbeddedSubtitles } from "@/lib/subtitle-extractor";
@@ -128,19 +129,20 @@ const adding = new Map<string, Promise<TorrentInfo | null>>();
 /** The torrent with its file list, or null while metadata is still loading. */
 async function loadTorrent(magnet: string, hash: string | null): Promise<TorrentInfo | null> {
   const engine = getTorrentEngine();
-  if (hash) {
-    const t = await engine.getTorrent(hash).catch(() => null);
-    if (t?.ready && t.files.length) return t;
+  let t = hash ? await engine.getTorrent(hash).catch(() => null) : null;
+  if (!(t?.ready && t.files.length)) {
+    let p = adding.get(magnet);
+    if (!p) {
+      p = engine
+        .addTorrent(magnet)
+        .catch(() => null)
+        .finally(() => adding.delete(magnet));
+      adding.set(magnet, p);
+    }
+    t = await Promise.race([p, new Promise<null>((r) => setTimeout(() => r(null), 2500))]);
   }
-  let p = adding.get(magnet);
-  if (!p) {
-    p = engine
-      .addTorrent(magnet)
-      .catch(() => null)
-      .finally(() => adding.delete(magnet));
-    adding.set(magnet, p);
-  }
-  return Promise.race([p, new Promise<null>((r) => setTimeout(() => r(null), 2500))]);
+  if (t) saveMeta(t.infoHash, t);
+  return t;
 }
 
 /** loadTorrent for a library item, recording its real infoHash/folder like /api/torrent/files does. */

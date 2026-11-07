@@ -152,6 +152,20 @@ export interface StorageEntry {
   kind: StorageEntryKind;
   libraryItemId?: string;
   itemName?: string; // matched library item's name, for display
+  watched?: boolean; // every watch record for this item is finished
+  files?: StorageFile[]; // the video files inside, with what each costs
+}
+
+export interface StorageFile {
+  rel: string; // path inside the cache dir
+  name: string;
+  sizeBytes: number;
+  sizeFormatted: string;
+  infoHash?: string;
+  fileIndex?: number;
+  watched?: boolean;
+  magnet?: string; // the library item's, to play it
+  length?: number; // full episode size, from the pack's file list
 }
 
 export interface DiskSpace {
@@ -200,6 +214,10 @@ export interface WatchProgressData {
 // Runtime-switchable data directory
 export interface DataDirReport {
   activeDir: string;
+  /** Same folder as the computer sees it — differs from activeDir in Docker. */
+  hostDir: string;
+  /** Running in Docker: the folder is fixed by how the container was started. */
+  docker: boolean;
   mediaRoot: string;
   freeBytes: number;
   totalBytes: number;

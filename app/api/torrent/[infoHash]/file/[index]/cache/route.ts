@@ -7,6 +7,7 @@ import {
   deleteCacheFile,
   formatBytes,
 } from "@/lib/storage-store";
+import { removeDownload } from "@/lib/downloads-store";
 
 // GET /api/torrent/[infoHash]/file/[index]/cache?path=<relative cache path>
 // How much disk this one file is holding right now.
@@ -56,6 +57,9 @@ export async function DELETE(
       }
     }
   }
+
+  // The bytes are gone, so stop re-pinning them after a restart.
+  removeDownload(infoHash, fileIndex);
 
   return NextResponse.json({
     success: true,

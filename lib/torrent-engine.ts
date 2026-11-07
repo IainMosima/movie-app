@@ -1,5 +1,6 @@
 import "server-only";
 import { fork, type ChildProcess } from "child_process";
+import { getDataDir } from "./data-dir";
 import { join } from "path";
 import type { TorrentInfo } from "@/types";
 
@@ -27,6 +28,8 @@ class TorrentEngine {
     this.worker = fork(WORKER_SCRIPT, [], {
       stdio: ["pipe", "inherit", "inherit", "ipc"],
       cwd: process.cwd(),
+      // One source of truth for where movies live: lib/data-dir.
+      env: { ...process.env, SPACEFLIX_DATA_DIR: getDataDir() },
     });
 
     this.worker.on("message", (msg: { type: string; port?: number }) => {
@@ -197,6 +200,26 @@ class TorrentEngine {
       this.worker.kill("SIGTERM");
       this.worker = null;
     }
+  }
+
+  /**
+   * Stop the worker for good (app shutdown/restart): no crash-recovery respawn,
+   * and wait until it's really gone so the next start can take port 9191.
+   */
+  async shutdown(): Promise<void> {
+    const w = this.worker;
+    if (!w) return;
+    this.worker = null;
+    w.removeAllListeners("exit");
+    await new Promise<void>((resolve) => {
+      const done = () => resolve();
+      w.once("exit", done);
+      w.kill("SIGTERM");
+      setTimeout(() => {
+        if (w.exitCode === null) w.kill("SIGKILL");
+        setTimeout(done, 500);
+      }, 3000);
+    });
   }
 
   /**

@@ -49,3 +49,10 @@ next-env.d.ts
 
 # watch positions churn on every playback — runtime state, not content
 /data/watch-progress.json
+
+# Local runtime data (user-specific)
+/data/downloads.json
+/data/meta/
+/data/server.log
+/data/tv-check.log
+/data/library.backup-*.json

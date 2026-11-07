@@ -6,6 +6,7 @@ import { getTorrentEngine } from "@/lib/torrent-engine";
 import { getAllItems, updateItem } from "@/lib/library-store";
 import { getCachePath, allocatedSize, formatBytes } from "@/lib/storage-store";
 import { extractInfoHashFromMagnet } from "@/lib/torrent-cache-actions";
+import { saveMeta } from "@/lib/torrent-meta";
 import type { TorrentInfo } from "@/types";
 
 const GetFilesSchema = z.object({
@@ -60,6 +61,7 @@ export async function POST(request: NextRequest) {
     const engine = getTorrentEngine();
     const torrentInfo = await engine.addTorrent(magnet);
     rememberCacheFolder(magnet, torrentInfo);
+    saveMeta(torrentInfo.infoHash, torrentInfo);
 
     return NextResponse.json(buildResponse(torrentInfo));
   } catch (error) {

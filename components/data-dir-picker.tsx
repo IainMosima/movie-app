@@ -50,7 +50,7 @@ export function DataDirPicker() {
 
   const handleOpen = () => {
     setOpen(true);
-    loadPath(report?.activeDir);
+    loadPath(report?.hostDir ?? report?.activeDir);
   };
 
   const handleSwitch = async () => {
@@ -89,9 +89,9 @@ export function DataDirPicker() {
       ) : (
         <div className="space-y-3">
           <div>
-            <p className="text-xs text-zinc-500 mb-1">Active directory</p>
+            <p className="text-xs text-zinc-500 mb-1">Movies are stored in</p>
             <p className="text-sm text-zinc-200 font-mono break-all">
-              {report?.activeDir}
+              {report?.hostDir ?? report?.activeDir}
             </p>
           </div>
 
@@ -121,7 +121,9 @@ export function DataDirPicker() {
             Change Folder
           </Button>
           <p className="text-xs text-zinc-600">
-            Browsing is limited to whatever directory is mounted/available to the app.
+            {report?.docker
+              ? "Running in Docker: pick any folder inside your home folder. "
+              : ""}
             Switching restarts the torrent engine.
           </p>
         </div>

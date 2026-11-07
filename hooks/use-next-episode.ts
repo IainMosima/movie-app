@@ -158,15 +158,14 @@ export function useNextEpisode(
     lastPositionRef.current = null;
 
     // 2. Drop the just-watched episode's bytes — the CURRENT file/item, never the
-    // next one. Fire-and-forget.
-    const { path, itemId } = currentRef.current;
-    const cacheUrl =
-      target.kind === "file"
-        ? `/api/torrent/${infoHash}/file/${fileIndex}/cache${path ? `?path=${encodeURIComponent(path)}` : ""}`
-        : itemId
-          ? `/api/library/${itemId}/cache`
-          : null;
-    if (cacheUrl) fetch(cacheUrl, { method: "DELETE" }).catch(() => {});
+    // next one. In a pack the worker does it itself the moment the next episode
+    // starts streaming (its switch purge), so nothing to send. A folder item is
+    // its own torrent: delete it a little later, server-side, so wiping it can't
+    // compete with loading the next one.
+    const { itemId } = currentRef.current;
+    if (target.kind === "item" && itemId) {
+      fetch(`/api/library/${itemId}/cache?after=20`, { method: "DELETE" }).catch(() => {});
+    }
 
     // 3. Go.
     if (target.kind === "file") {
@@ -176,8 +175,26 @@ export function useNextEpisode(
       return;
     }
 
-    // A separate torrent has to be added before the player can stream it —
-    // the same step handleResume takes on the home page.
+    // A separate torrent has to be added before the player can stream it.
+    // When its hash is known, start the add and move on right away: the next
+    // episode's own page shows "Finding peers…" while the add runs (it keeps
+    // going after navigation), instead of a frozen screen here.
+    const knownHash =
+      target.item.infoHash?.toLowerCase() ??
+      target.item.magnet.match(/btih:([a-f0-9]{40})/i)?.[1]?.toLowerCase();
+    if (knownHash) {
+      fetch("/api/torrent/files", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ magnet: target.item.magnet }),
+      }).catch(() => {});
+      router.replace(
+        watchUrl(knownHash, target.item.name, target.item.fileIndex ?? 0, returnTo)
+      );
+      return;
+    }
+
+    // Hash unknown (old base32 magnet): wait for the add to learn it.
     setIsLoading(true);
     try {
       const res = await fetch("/api/torrent/files", {

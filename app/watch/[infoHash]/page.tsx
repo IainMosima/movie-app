@@ -4,6 +4,7 @@ import { useEffect, useRef, useCallback, useState, use } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { VideoPlayer } from "@/components/video-player";
 import { useNextEpisode } from "@/hooks/use-next-episode";
+import { useVlcCopy } from "@/hooks/use-vlc-copy";
 import { Loader2, HardDrive } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -31,6 +32,7 @@ function formatSpeed(bytesPerSec: number): string {
 export default function WatchPage({ params }: WatchPageProps) {
   const { infoHash } = use(params);
   const router = useRouter();
+  const copyVlc = useVlcCopy();
   const searchParams = useSearchParams();
   const title = searchParams.get("title") || "Unknown";
   const fileIndex = searchParams.get("file");
@@ -551,12 +553,10 @@ export default function WatchPage({ params }: WatchPageProps) {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() =>
-                  (window.location.href = `/api/vlc/${infoHash}?file=${fileIndexNum}&title=${encodeURIComponent(title)}`)
-                }
+                onClick={() => copyVlc(infoHash, fileIndexNum, title)}
                 className="text-zinc-500"
               >
-                Open in VLC
+                Copy VLC link
               </Button>
             )}
             <Button variant="ghost" size="sm" onClick={handleKeep} className="text-zinc-500">

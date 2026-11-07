@@ -3,11 +3,27 @@ services:
     build: .
     image: mosimaiain/movie-app:latest
     container_name: movie-app
-    network_mode: host
+    # Published ports (not network_mode: host) — host networking isn't passed
+    # through by Docker Desktop on a Mac, and this works on Linux too.
+    ports:
+      - "8181:8181" # the app
+      - "9191:9191" # video streams (VLC, players)
+      - "6881:6881/tcp" # torrent peers can connect in → faster downloads
+      - "6881:6881/udp"
     restart: unless-stopped
     volumes:
+      # Movies, library and history — always on the computer, never inside the container.
       - ${MEDIA_ROOT:-./data}:/app/data
+      # Your home folder, so Settings can move movies to another folder on the computer.
+      - ${HOST_HOME:-./data}:/host
     environment:
       - NODE_ENV=production
       - HOSTNAME=0.0.0.0
       - PORT=8181
+      - TORRENT_PORT=6881
+      # The Mac's Wi-Fi address, so links for phones/TVs aren't Docker-internal.
+      # `make c-run` fills it in.
+      - HOST_LAN_IP=${HOST_LAN_IP:-}
+      # The same folder as the computer sees it, for display in Settings.
+      - HOST_DATA_DIR=${HOST_DATA_DIR:-}
+      - HOST_HOME=${HOST_HOME:-}

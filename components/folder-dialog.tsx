@@ -23,6 +23,7 @@ import {
   CircleCheck,
   CircleDashed,
   Download,
+  Pause,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -40,11 +41,13 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { isValidTorrentInput, extractInfoHash } from "@/lib/torrent-utils";
-import { useDownloadProgress } from "@/hooks/use-download-progress";
+import { useDownloadProgress, type DownloadTarget } from "@/hooks/use-download-progress";
+import { DownloadAhead, DownloadBar, DownloadStateLabel } from "@/components/file-picker";
 import { cn } from "@/lib/utils";
-import { sortFolderItems } from "@/lib/episode-order";
+import { episodeCode, sortFolderItems } from "@/lib/episode-order";
 import { ScrollPager } from "@/components/scroll-pager";
 import type { WatchStatus } from "@/hooks/use-watch-progress";
+import { SeriesBar, type SeriesEpisode } from "@/components/series-bar";
 import type {
   LibraryFolderWithUsage,
   LibraryItemWithUsage,
@@ -121,31 +124,64 @@ export function FolderDialog({
         .map((id) => items.find((i) => i.id === id))
         .filter(Boolean) as LibraryItemWithUsage[])
     : ordered;
-  const downloads = useDownloadProgress(
-    open,
-    items.map((i) => ({
-      id: i.id,
-      infoHash: i.infoHash ?? extractInfoHash(i.magnet),
-      fileIndex: i.fileIndex ?? null,
-    }))
-  );
+  const rowOf = (i: LibraryItemWithUsage) => ({
+    id: i.id,
+    infoHash: i.infoHash ?? extractInfoHash(i.magnet),
+    fileIndex: i.fileIndex ?? null,
+  });
+  const downloads = useDownloadProgress(open, items.map(rowOf));
 
-  // Add (or reuse) the torrent, then pin the item's file to download in full.
-  const startDownload = (item: LibraryItemWithUsage) =>
-    downloads.start(item.id, async () => {
-      const res = await fetch("/api/torrent/files", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ magnet: item.magnet }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to load torrent");
-      const fileIndex: number = item.fileIndex ?? data.mainVideoIndex;
-      const file = (data.files as { index: number; size: number }[]).find(
-        (f) => f.index === fileIndex
-      );
-      return { infoHash: data.infoHash, fileIndex, fileSize: file?.size ?? 0 };
-    });
+  // Size: what the server learned when it was pinned, else the magnet's `xl=`.
+  const sizeOf = (i: LibraryItemWithUsage) =>
+    downloads.entry(rowOf(i))?.size ||
+    Number(new URLSearchParams(i.magnet.split("?")[1] ?? "").get("xl")) ||
+    undefined;
+  // The server adds the torrent if needed and picks the main video without a fileIndex.
+  const targetOf = (i: LibraryItemWithUsage): DownloadTarget => ({
+    magnet: i.magnet,
+    infoHash: rowOf(i).infoHash ?? undefined,
+    fileIndex: i.fileIndex,
+    title: i.name,
+    size: sizeOf(i),
+  });
+  const startDownload = (item: LibraryItemWithUsage) => downloads.start(item.id, targetOf(item));
+
+  // The series strip: where you are, the episode after it, what's watched and on disk.
+  const seriesEpisodes: SeriesEpisode[] = ordered.map((i) => {
+    const st = statusFor(i);
+    return {
+      key: i.id,
+      code: episodeCode(i.name) ?? i.name,
+      state: st.state,
+      pct: st.pct,
+      timeLeft: st.state === "watching" ? st.label : undefined,
+      updatedAt: st.record?.updatedAt,
+    };
+  });
+  const currentIdx = (() => {
+    const watching = seriesEpisodes
+      .map((e, idx) => ({ e, idx }))
+      .filter(({ e }) => e.state === "watching")
+      .sort((a, b) => (b.e.updatedAt ?? 0) - (a.e.updatedAt ?? 0))[0];
+    if (watching) return watching.idx;
+    const first = seriesEpisodes.findIndex((e) => e.state === "unwatched");
+    return first < 0 ? 0 : first;
+  })();
+  const nextItem: LibraryItemWithUsage | undefined = ordered[currentIdx + 1];
+  const watchedCached = ordered.filter((i) => statusFor(i).state === "watched" && i.cachedBytes > 0);
+
+  // "Download ahead" runs from the first episode (in episode order) not yet watched.
+  const nextUnwatched = ordered.findIndex((i) => statusFor(i).state !== "watched");
+  const ahead =
+    nextUnwatched < 0
+      ? []
+      : ordered.slice(nextUnwatched).map((i) => ({
+          rowId: i.id,
+          label: i.name,
+          target: targetOf(i),
+          status: downloads.status(rowOf(i)),
+          size: sizeOf(i),
+        }));
 
   const isArranged = items.length > 0 && items.every((i) => i.sortOrder !== undefined);
 
@@ -360,10 +396,46 @@ export function FolderDialog({
               </span>
             </Button>
           )}
+          <DownloadAhead episodes={ahead} free={downloads.free} onStart={downloads.startMany} />
         </div>
 
+        {seriesEpisodes.length > 1 && (
+          <SeriesBar
+            episodes={seriesEpisodes}
+            onPlay={(id) => {
+              const item = ordered.find((i) => i.id === id);
+              if (item) onPlay(item);
+            }}
+            next={
+              nextItem
+                ? {
+                    key: nextItem.id,
+                    code: episodeCode(nextItem.name) ?? nextItem.name,
+                    status: downloads.status(rowOf(nextItem)),
+                    onDownload: () => startDownload(nextItem),
+                    onTogglePause: () => downloads.togglePause(rowOf(nextItem)),
+                  }
+                : undefined
+            }
+            watchedBytes={watchedCached.reduce((n, i) => n + i.cachedBytes, 0)}
+            onClearWatched={async () => {
+              let freed = 0;
+              for (const i of watchedCached) {
+                try {
+                  await onClearItemCache(i.id);
+                  freed += i.cachedBytes;
+                } catch {
+                  // keep going with the rest
+                }
+              }
+              toast.success(`Freed ${(freed / 1024 ** 3).toFixed(freed >= 10 * 1024 ** 3 ? 0 : 1)} GB`);
+              await downloads.refresh();
+            }}
+          />
+        )}
+
         {/* Items */}
-        <ScrollPager className="-mr-2 pr-2 py-2">
+        <ScrollPager className="-mr-2 pr-2 pl-1 py-2">
           {items.length === 0 ? (
             <p className="text-sm text-zinc-600 text-center py-10 px-4">
               Nothing here yet — add episodes one magnet at a time below.
@@ -374,12 +446,10 @@ export function FolderDialog({
                 const isBusy = busy === item.id;
                 const cached = item.cachedBytes > 0;
                 const status = statusFor(item);
-                const dl = downloads.status({
-                  id: item.id,
-                  infoHash: item.infoHash ?? extractInfoHash(item.magnet),
-                  fileIndex: item.fileIndex ?? null,
-                });
-                const ready = dl.progress !== undefined && dl.progress >= 1;
+                const dl = downloads.status(rowOf(item));
+                const ready = dl.state === "ready";
+                const dlActive =
+                  dl.state === "starting" || dl.state === "queued" || dl.state === "downloading";
                 return (
                   <div
                     key={item.id}
@@ -427,19 +497,12 @@ export function FolderDialog({
                         {status.state === "watching" && (
                           <span className="text-purple-300/90"> · {status.label}</span>
                         )}
-                        {ready ? (
-                          <span className="ml-1.5 text-emerald-300">· ✓ Ready</span>
-                        ) : (
-                          dl.progress !== undefined &&
-                          dl.progress > 0 && (
-                            <span className="ml-1.5 text-purple-300 tabular-nums">
-                              · ↓ {Math.floor(dl.progress * 100)}%
-                            </span>
-                          )
+                        {dl.state !== "idle" && dl.state !== "error" && (
+                          <DownloadStateLabel s={dl} className="ml-1.5 text-[11px]" />
                         )}
                       </p>
-                      {dl.error && (
-                        <p className="text-[11px] text-red-400 mt-0.5">{dl.error}</p>
+                      {dl.state === "error" && (
+                        <DownloadStateLabel s={dl} className="mt-0.5 text-[11px]" />
                       )}
                     </div>
 
@@ -449,14 +512,33 @@ export function FolderDialog({
                       <Button
                         size="icon"
                         variant="ghost"
-                        onClick={() => startDownload(item)}
-                        disabled={dl.busy}
-                        className="h-10 w-10 text-zinc-500 hover:text-purple-300 shrink-0"
-                        aria-label={`Download ${item.name}`}
-                        title="Download in the background so it's ready to watch"
+                        onClick={() =>
+                          dl.state === "downloading" || dl.state === "queued" || dl.state === "paused"
+                            ? downloads.togglePause(rowOf(item))
+                            : startDownload(item)
+                        }
+                        disabled={dl.state === "starting"}
+                        className={cn(
+                          "h-10 w-10 hover:text-purple-300 focus-visible:ring-2 focus-visible:ring-purple-400 shrink-0",
+                          dlActive || dl.state === "paused" ? "text-purple-300" : "text-zinc-500"
+                        )}
+                        aria-label={`${
+                          dl.state === "paused" ? "Resume" : dl.state === "downloading" || dl.state === "queued" ? "Pause" : "Download"
+                        } ${item.name}`}
+                        title={
+                          dl.state === "paused"
+                            ? "Resume download"
+                            : dl.state === "downloading" || dl.state === "queued"
+                              ? "Pause download"
+                              : "Download in the background so it's ready to watch"
+                        }
                       >
-                        {dl.busy ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
+                        {dl.state === "starting" ? (
+                          <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
+                        ) : dl.state === "downloading" || dl.state === "queued" ? (
+                          <Pause className="h-4 w-4" />
+                        ) : dl.state === "paused" ? (
+                          <Play className="h-4 w-4 fill-current" />
                         ) : (
                           <Download className="h-4 w-4" />
                         )}
@@ -468,8 +550,8 @@ export function FolderDialog({
                       variant="ghost"
                       onClick={() => onVLC(item)}
                       className="h-10 w-10 text-zinc-500 hover:text-purple-300 shrink-0"
-                      aria-label="Get VLC link"
-                      title="Get VLC link"
+                      aria-label="Copy VLC link"
+                      title="Copy VLC link"
                     >
                       <MonitorPlay className="h-4 w-4" />
                     </Button>
@@ -540,7 +622,9 @@ export function FolderDialog({
                     </DropdownMenu>
                     </div>
 
-                    {status.state === "watching" && (
+                    {dl.state === "downloading" ? (
+                      <DownloadBar s={dl} />
+                    ) : status.state === "watching" && (
                       <div className="absolute left-0 right-0 bottom-0 h-1 bg-zinc-800">
                         <div
                           className="h-full bg-purple-600"

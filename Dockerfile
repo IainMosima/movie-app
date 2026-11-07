@@ -51,6 +51,7 @@ RUN mkdir -p /app/data && chown -R app:app /app/data
 USER app
 
 ENV NODE_ENV=production \
+    SPACEFLIX_DOCKER=1 \
     HOSTNAME=0.0.0.0 \
     PORT=8181 \
     MEDIA_ROOT=/app/data

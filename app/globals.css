@@ -123,6 +123,13 @@
   body {
     @apply bg-background text-foreground;
   }
+  /* Tailwind 4 dropped the pointer on buttons; anything you can press shows a hand. */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  summary,
+  select {
+    cursor: pointer;
+  }
 }
 
 /* TV-friendly scrollbar - always visible */

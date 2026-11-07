@@ -1,4 +1,5 @@
 import "server-only";
+import { execFileSync } from "child_process";
 import { readdirSync, statSync, existsSync, rmSync, unlinkSync } from "fs";
 import { statfsSync } from "fs";
 import { join, resolve, sep } from "path";
@@ -238,12 +239,34 @@ export function deleteCacheForLibraryItem(id: string): number {
   return reclaimed;
 }
 
+/**
+ * `df -k` is right everywhere: macOS, Linux and inside Docker. statfs isn't —
+ * through Docker Desktop's shared folder it reports a 1 MB block size with
+ * 4 KB block counts, inflating 14 GB free into "3.5 TB". Null on Windows
+ * (no df) so the caller falls back to statfs.
+ */
+function dfSpace(target: string): { freeBytes: number; totalBytes: number } | null {
+  try {
+    const out = execFileSync("df", ["-k", target], { encoding: "utf-8", timeout: 3000 });
+    // Last line; a long device name can push the numbers onto their own line.
+    const cols = out.trim().split("\n").slice(1).join(" ").trim().split(/\s+/);
+    const nums = cols.filter((c) => /^\d+$/.test(c)).map(Number);
+    // df -k: 1K-blocks, Used, Available, …
+    if (nums.length < 3) return null;
+    return { totalBytes: nums[0] * 1024, freeBytes: nums[2] * 1024 };
+  } catch {
+    return null;
+  }
+}
+
 export function getDiskSpace(): DiskSpace {
   let freeBytes = 0;
   let totalBytes = 0;
   // Report space for whichever volume the active data dir currently lives on —
   // it may have moved (e.g. to an external drive) since the app started.
-  for (const target of [getDataDir(), "/System/Volumes/Data", "/"]) {
+  const df = dfSpace(getDataDir());
+  if (df) ({ freeBytes, totalBytes } = df);
+  else for (const target of [getDataDir(), "/System/Volumes/Data", "/"]) {
     try {
       const stats = statfsSync(target);
       freeBytes = stats.bavail * stats.bsize;
